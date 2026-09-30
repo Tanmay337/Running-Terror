@@ -4,26 +4,25 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AgriFlow™️ // Dynamic Precision Irrigation & Hydrology Optimization</title>
+  <title>ArgiFlow™️ // Dynamic Precision Irrigation & Hydrology Optimization</title>
   <meta name="description"
-    content="AgriFlow is an AI-driven dynamic precision irrigation platform dividing land into 4 equal quadrants with soil-specific moisture targeting, dynamic K-factor hydrology, real-time weather gating, and water deficit optimization.">
+    content="ArgiFlow is an AI-driven dynamic precision irrigation platform dividing land into 4 equal quadrants with soil-specific moisture targeting, dynamic K-factor hydrology, real-time weather gating, and water deficit optimization.">
 
-  <!-- Modern Typography -->
+  <!-- Performance Optimized Fonts (swap display to prevent invisible text flash) -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link
-    href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap"
+    href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;700&family=Plus+Jakarta+Sans:wght@400;600;700;800&family=Space+Grotesk:wght@600;700&display=swap"
     rel="stylesheet">
 
-  <!-- FontAwesome / Lucide style icons via SVG -->
   <link rel="stylesheet" href="style.css">
 </head>
 
 <body>
+  <!-- Ultra-lightweight ambient backdrop without heavy blur layers -->
   <div class="app-background">
     <div class="glow-orb orb-1"></div>
     <div class="glow-orb orb-2"></div>
-    <div class="glow-orb orb-3"></div>
     <div class="grid-overlay"></div>
   </div>
 
@@ -40,10 +39,10 @@
         </div>
         <div>
           <div class="brand-title-row">
-            <h1 class="brand-title">Agri<span class="text-accent">Flow</span></h1>
+            <h1 class="brand-title">Argi<span class="text-accent">Flow</span></h1>
             <span class="badge badge-tech">PRECISION HYDRO-AI v3.2</span>
           </div>
-          <p class="brand-subtitle">Dynamic 4-Quadrant Precision Irrigation & Reservoir Optimization Engine</p>
+          <p class="brand-subtitle">Dynamic 4-Quadrant Precision Irrigation, Weather Gating &amp; Reservoir Optimization</p>
         </div>
       </div>
 
@@ -59,8 +58,7 @@
             <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
             <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
           </svg>
-          <svg id="sound-icon-off" class="icon hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-            stroke-width="2">
+          <svg id="sound-icon-off" class="icon hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
             <line x1="23" y1="9" x2="17" y2="15"></line>
             <line x1="17" y1="9" x2="23" y2="15"></line>
@@ -155,7 +153,7 @@
       </div>
     </section>
 
-    <!-- Main Layout Grid: Left (4 Field Quadrants) & Right (Weather & Optimization Hub) -->
+    <!-- Main Layout Grid -->
     <main class="main-dashboard-grid">
 
       <!-- LEFT COLUMN: 4-Quadrant Precision Irrigation Field Area -->
@@ -165,8 +163,7 @@
             <div class="panel-badge-circle">4Q</div>
             <div>
               <h2 id="field-heading" class="panel-title">Equal-Area Quadrant Farm Topology (2×2)</h2>
-              <p class="panel-desc">4 equal zones (25 Ha each) with distinct soil composition, calibrated K-factor, and
-                target moisture.</p>
+              <p class="panel-desc">4 equal zones (25 Ha each) with distinct soil composition, calibrated K-factor, and target moisture.</p>
             </div>
           </div>
 
@@ -192,19 +189,17 @@
 
         <!-- 2x2 Interactive Field Quadrants Grid -->
         <div class="field-quadrants-grid" id="quadrants-container">
-          <!-- Quadrant Cards generated dynamically by JavaScript for clean reactivity -->
+          <!-- Rendered once and cached -->
         </div>
 
-        <!-- Field Aerial Overview Bar with Live Drone Feed preview -->
+        <!-- Field Aerial Overview Bar -->
         <div class="farm-aerial-banner">
-          <img src="assets/farm_quadrants.jpg" alt="Aerial Precision Farm Drone View" class="aerial-preview-img"
-            id="aerial-img">
+          <div class="aerial-fallback-pattern"></div>
           <div class="aerial-overlay">
             <div class="aerial-info">
               <div class="aerial-tag"><span class="pulse-dot"></span> SATELLITE & SENSOR MULTISPECTRAL OVERLAY</div>
               <h3 class="aerial-title">Precision Hydrology Quadrants (A, B, C, D)</h3>
-              <p class="aerial-caption">Live continuous sensing of volumetric water content (VWC), matric potential, and
-                variable rate irrigation (VRI) nozzle arrays.</p>
+              <p class="aerial-caption">Live continuous sensing of volumetric water content (VWC), matric potential, and variable rate irrigation (VRI) nozzle arrays.</p>
             </div>
             <div class="aerial-meta">
               <div class="meta-pill">
@@ -237,7 +232,6 @@
                 <p class="panel-desc">Evaluate Rain & Humidity to decide: Instant vs Delayed Irrigation</p>
               </div>
             </div>
-            <!-- Preset weather selector -->
             <select id="weather-preset-select" class="form-select select-sm" aria-label="Select Weather Preset">
               <option value="custom">-- Weather Presets --</option>
               <option value="sunny_dry" selected>☀️ Sunny & Arid (High Evaporation)</option>
@@ -253,8 +247,7 @@
             <div class="weather-input-card">
               <div class="weather-label-row">
                 <span class="control-label">
-                  <svg class="icon-inline text-cyan" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                    stroke-width="2">
+                  <svg class="icon-inline text-cyan" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <line x1="8" y1="19" x2="8" y2="21"></line>
                     <line x1="8" y1="13" x2="8" y2="15"></line>
                     <line x1="16" y1="19" x2="16" y2="21"></line>
@@ -279,8 +272,7 @@
             <div class="weather-input-card">
               <div class="weather-label-row">
                 <span class="control-label">
-                  <svg class="icon-inline text-blue" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                    stroke-width="2">
+                  <svg class="icon-inline text-blue" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"></path>
                   </svg>
                   Ambient Relative Humidity
@@ -299,8 +291,7 @@
             <div class="weather-input-card">
               <div class="weather-label-row">
                 <span class="control-label">
-                  <svg class="icon-inline text-amber" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                    stroke-width="2">
+                  <svg class="icon-inline text-amber" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M14 4v10.54a4 4 0 1 1-4 0V4a2 2 0 0 1 4 0Z"></path>
                   </svg>
                   Temperature & VPD
@@ -320,9 +311,7 @@
           <!-- Dynamic Decision Outcome Card -->
           <div class="weather-decision-banner" id="weather-decision-card">
             <div class="decision-header">
-              <div class="decision-icon" id="decision-status-icon">
-                <!-- Injected via JS -->
-              </div>
+              <div class="decision-icon" id="decision-status-icon"></div>
               <div class="decision-titles">
                 <div class="decision-sub">DISPATCH DECISION ALGORITHM</div>
                 <h4 class="decision-main-title" id="decision-title">INSTANT IRRIGATION AUTHORIZED</h4>
@@ -362,13 +351,12 @@
               </div>
               <div>
                 <h2 class="panel-title">Water Reservoir & Optimization Studio</h2>
-                <p class="panel-desc">Automatic triage & smart deficit allocation when required water exceeds available
-                  storage.</p>
+                <p class="panel-desc">Automatic triage & smart deficit allocation when required water exceeds available storage.</p>
               </div>
             </div>
           </div>
 
-          <!-- Reservoir Tank Interactive Slider -->
+          <!-- Reservoir Tank Slider -->
           <div class="reservoir-control-box">
             <div class="reservoir-header-row">
               <div>
@@ -383,9 +371,7 @@
 
             <!-- Visual Water Tank Gauge Bar -->
             <div class="tank-level-container">
-              <div class="tank-fill-bar" id="tank-fill-bar" style="width: 60%;">
-                <div class="tank-water-wave"></div>
-              </div>
+              <div class="tank-fill-bar" id="tank-fill-bar" style="transform: scaleX(0.4);"></div>
               <div class="tank-marker-demand" id="tank-demand-marker" title="Total Water Required"></div>
             </div>
 
@@ -417,8 +403,7 @@
             </div>
 
             <p class="opt-strategy-desc" id="opt-strategy-desc">
-              <strong>Smart Agronomic Vulnerability:</strong> Rations water by multiplying soil drought sensitivity
-              (Sandy soils dry out rapidly and have high wilting risk) with root zone deficit.
+              <strong>Smart Agronomic Vulnerability:</strong> Rations water by multiplying soil drought sensitivity (Sandy soils dry out rapidly and have high wilting risk) with root zone deficit.
             </p>
 
             <!-- Optimization Comparison Table -->
@@ -434,9 +419,7 @@
                     <th>Coverage</th>
                   </tr>
                 </thead>
-                <tbody id="allocation-table-body">
-                  <!-- Dynamic Rows populated by JS -->
-                </tbody>
+                <tbody id="allocation-table-body"></tbody>
               </table>
             </div>
 
@@ -496,8 +479,7 @@
         <div class="math-equations-grid">
           <div class="equation-card">
             <div class="eq-title">1. Moisture Deficit Equation</div>
-            <div class="eq-formula">$$\Delta M_i = \max\left(0, M_{\text{target}, i} - M_{\text{current}, i}\right)
-              \quad [\%]$$</div>
+            <div class="eq-formula">$$\Delta M_i = \max\left(0, M_{\text{target}, i} - M_{\text{current}, i}\right) \quad [\%]$$</div>
             <p class="eq-note">Deficit is strictly non-negative; saturated soil requires 0 L water.</p>
           </div>
 
@@ -509,29 +491,24 @@
 
           <div class="equation-card">
             <div class="eq-title">3. Weather Gating Rule</div>
-            <div class="eq-formula">$$\text{Status} = \begin{cases} \text{DELAY}, & \text{Rain} \ge 5\text{mm} \lor
-              (\text{RH} > 80\% \land \text{Rain} \ge 2) \\ \text{INSTANT}, & \text{Otherwise} \end{cases}$$</div>
+            <div class="eq-formula">$$\text{Status} = \begin{cases} \text{DELAY}, & \text{Rain} \ge 5\text{mm} \lor (\text{RH} > 80\% \land \text{Rain} \ge 2) \\ \text{INSTANT}, & \text{Otherwise} \end{cases}$$</div>
             <p class="eq-note">Rain forecast suppresses irrigation to prevent waterlogging &amp; run-off.</p>
           </div>
 
           <div class="equation-card">
             <div class="eq-title">4. Deficit Water Optimization</div>
-            <div class="eq-formula">$$\text{Alloc}_i = \min\left(W_{\text{req}, i}, W_{\text{res}} \times
-              \frac{\omega_i}{\sum \omega_j}\right), \quad \omega_i = \Delta M_i \cdot V_{\text{soil}, i}$$</div>
-            <p class="eq-note">When reservoir is constrained, water is prioritized by soil drought vulnerability \(V\).
-            </p>
+            <div class="eq-formula">$$\text{Alloc}_i = \min\left(W_{\text{req}, i}, W_{\text{res}} \times \frac{\omega_i}{\sum \omega_j}\right), \quad \omega_i = \Delta M_i \cdot V_{\text{soil}, i}$$</div>
+            <p class="eq-note">When reservoir is constrained, water is prioritized by soil drought vulnerability \(V\).</p>
           </div>
         </div>
         <div class="footer-bottom-bar">
-          <span>AERO-IRRIGATE™️ Dynamic Precision Irrigation Demo // Pure HTML5, Vanilla CSS &amp; Modern ES6+
-            Architecture</span>
-          <span class="text-accent">Equal Quadrant Partitioning (4 × 25 Ha)</span>
+          <span>ArgiFlow™️ Precision Hydrology Platform // Low-Footprint High-Performance Edition</span>
+          <span class="text-accent font-mono">Equal 4-Quadrant Partitioning (4 × 25 Ha)</span>
         </div>
       </div>
     </footer>
   </div>
 
-  <!-- Audio Tone Synthesizer & Logic Scripts -->
   <script src="app.js"></script>
 </body>
 

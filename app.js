@@ -1,2991 +1,1106 @@
-/*
-  ArgiFlow™
-  Dynamic Precision Irrigation Controller
+/**
+ * ArgiFlow™ // Dynamic Precision Irrigation + Live Weather Engine
+ * Location → Weather → FAO-56 ET₀ → Crop ETc → Soil Stress → Demand → Reservoir
+ */
 
-  MVP:
-  - 4 irrigation zones
-  - Simulated soil sensors
-  - Open-Meteo weather
-  - Location search
-  - FAO-56 ET0
-  - Crop stage + Kc
-  - Nonlinear soil model
-  - Weather gating
-  - Reservoir optimization
-  - Fixed schedule comparison
-  - Plotly charts
-  - Sensor failure fallback
-
-  IMPORTANT:
-  Soil sensors are simulated for the hackathon MVP.
-*/
-
-
-/* =========================================================
-   SOIL PROFILES
-========================================================= */
-
-const SOILS = {
-
+const SOIL_PROFILES = {
   clay: {
-    name: "Clay",
-    thetaFC: 36,
-    wp: 22,
-    root: 0.75,
-    vulnerability: 0.85,
-    nonlinear: 0.82
+    name: 'Clay Soil',
+    defaultTarget: 36,
+    wiltingPoint: 22,
+    kMin: 130,
+    kMax: 170,
+    droughtVulnerability: 0.85
   },
 
   sandy: {
-    name: "Sandy",
-    thetaFC: 18,
-    wp: 7,
-    root: 0.55,
-    vulnerability: 1.45,
-    nonlinear: 1.18
+    name: 'Sandy Soil',
+    defaultTarget: 18,
+    wiltingPoint: 7,
+    kMin: 65,
+    kMax: 95,
+    droughtVulnerability: 1.45
   },
 
   loamy: {
-    name: "Loamy",
-    thetaFC: 28,
-    wp: 13,
-    root: 0.65,
-    vulnerability: 1.00,
-    nonlinear: 1.00
+    name: 'Loamy Soil',
+    defaultTarget: 28,
+    wiltingPoint: 13,
+    kMin: 95,
+    kMax: 135,
+    droughtVulnerability: 1.00
   },
 
   silt_loam: {
-    name: "Silt Loam",
-    thetaFC: 32,
-    wp: 15,
-    root: 0.70,
-    vulnerability: 0.95,
-    nonlinear: 0.90
+    name: 'Silt Loam',
+    defaultTarget: 32,
+    wiltingPoint: 15,
+    kMin: 110,
+    kMax: 150,
+    droughtVulnerability: 0.95
   },
 
   peaty: {
-    name: "Peaty",
-    thetaFC: 42,
-    wp: 24,
-    root: 0.65,
-    vulnerability: 0.80,
-    nonlinear: 0.78
+    name: 'Peaty / Org',
+    defaultTarget: 42,
+    wiltingPoint: 24,
+    kMin: 140,
+    kMax: 190,
+    droughtVulnerability: 0.80
   }
-
 };
 
 
 /* =========================================================
-   CROP DATA
-========================================================= */
+   CROP COEFFICIENTS
+   ========================================================= */
 
-const CROPS = {
-
-  maize: {
-    name: "Maize / Corn",
-    kc: {
-      initial: 0.30,
-      development: 0.90,
-      mid: 1.20,
-      late: 0.60
-    }
+const CROP_KC = {
+  'Soybeans': {
+    initial: 0.40,
+    mid: 1.15,
+    late: 0.50
   },
 
-  soybean: {
-    name: "Soybeans",
-    kc: {
-      initial: 0.40,
-      development: 0.85,
-      mid: 1.15,
-      late: 0.50
-    }
+  'Maize / Corn': {
+    initial: 0.30,
+    mid: 1.20,
+    late: 0.60
   },
 
-  wheat: {
-    name: "Winter Wheat",
-    kc: {
-      initial: 0.30,
-      development: 0.85,
-      mid: 1.15,
-      late: 0.40
-    }
+  'Winter Wheat': {
+    initial: 0.35,
+    mid: 1.15,
+    late: 0.40
   },
 
-  sunflower: {
-    name: "Sunflowers",
-    kc: {
-      initial: 0.35,
-      development: 0.80,
-      mid: 1.15,
-      late: 0.35
-    }
+  'Sunflowers': {
+    initial: 0.35,
+    mid: 1.15,
+    late: 0.35
   }
-
 };
-
-
-const STAGES = [
-  "initial",
-  "development",
-  "mid",
-  "late"
-];
-
-
-const STAGE_LABEL = {
-
-  initial: "Initial",
-
-  development: "Development",
-
-  mid: "Mid-season",
-
-  late: "Late-season"
-
-};
-
-
-/* =========================================================
-   GLOBAL STATE
-========================================================= */
-
-const state = {
-
-  location: {
-    name: "Jaipur, India",
-    lat: 26.9124,
-    lon: 75.7873
-  },
-
-  weather: {
-
-    live: false,
-
-    rain: 0,
-
-    temperature: 30,
-
-    humidity: 45,
-
-    wind: 2,
-
-    et0: 4,
-
-    vpd: 1.2,
-
-    forecast: []
-
-  },
-
-  reservoir: 15000000,
-
-  strategy: "smart",
-
-  sound: true,
-
-  simulating: false,
-
-  allSensorsFailed: false,
-
-  regions: [
-
-    {
-      id: 1,
-      letter: "A",
-      name: "Sector Alpha",
-      quadrant: "NW",
-      crop: "soybean",
-      soil: "clay",
-      stage: "development",
-      moisture: 25,
-      sensorOk: true,
-      lastGood: 25
-    },
-
-    {
-      id: 2,
-      letter: "B",
-      name: "Sector Beta",
-      quadrant: "NE",
-      crop: "maize",
-      soil: "sandy",
-      stage: "mid",
-      moisture: 11,
-      sensorOk: true,
-      lastGood: 11
-    },
-
-    {
-      id: 3,
-      letter: "C",
-      name: "Sector Gamma",
-      quadrant: "SW",
-      crop: "wheat",
-      soil: "loamy",
-      stage: "mid",
-      moisture: 18,
-      sensorOk: true,
-      lastGood: 18
-    },
-
-    {
-      id: 4,
-      letter: "D",
-      name: "Sector Delta",
-      quadrant: "SE",
-      crop: "sunflower",
-      soil: "silt_loam",
-      stage: "development",
-      moisture: 22,
-      sensorOk: true,
-      lastGood: 22
-    }
-
-  ]
-
-};
-
-
-/* =========================================================
-   HELPERS
-========================================================= */
-
-const $ = id => document.getElementById(id);
-
-
-function fmt(value) {
-
-  return Number(value || 0)
-    .toLocaleString(
-      undefined,
-      {
-        maximumFractionDigits: 0
-      }
-    );
-
-}
-
-
-function f1(value) {
-
-  return Number(value || 0)
-    .toFixed(1);
-
-}
-
-
-function getRegion(id) {
-
-  return state.regions.find(
-    r => r.id == id
-  );
-
-}
 
 
 /* =========================================================
    AUDIO
-========================================================= */
+   ========================================================= */
 
-function playTone(freq = 600) {
+class AudioController {
 
-  if (!state.sound) return;
-
-  try {
-
-    const AudioCtx =
-      window.AudioContext ||
-      window.webkitAudioContext;
-
-    if (!AudioCtx) return;
-
-    const ctx = new AudioCtx();
-
-    const osc =
-      ctx.createOscillator();
-
-    const gain =
-      ctx.createGain();
-
-    osc.frequency.value = freq;
-
-    gain.gain.value = 0.025;
-
-    osc.connect(gain);
-
-    gain.connect(ctx.destination);
-
-    osc.start();
-
-    osc.stop(
-      ctx.currentTime + 0.08
-    );
-
-  } catch (error) {}
-
-}
-
-
-/* =========================================================
-   TELEMETRY
-========================================================= */
-
-function log(message, type = "SYSTEM") {
-
-  const logs = $("logs");
-
-  if (!logs) return;
-
-  const row =
-    document.createElement("div");
-
-  row.textContent =
-    `[${new Date().toLocaleTimeString()}] [${type}] ${message}`;
-
-  logs.appendChild(row);
-
-  logs.scrollTop =
-    logs.scrollHeight;
-
-}
-
-
-/* =========================================================
-   CROP COEFFICIENT
-========================================================= */
-
-function getKc(region) {
-
-  return CROPS[
-    region.crop
-  ].kc[
-    region.stage
-  ];
-
-}
-
-
-/* =========================================================
-   NONLINEAR SOIL MODEL
-========================================================= */
-
-function nonlinearDeficit(region) {
-
-  const soil =
-    SOILS[region.soil];
-
-  const raw =
-    Math.max(
-      0,
-      soil.thetaFC -
-      region.moisture
-    );
-
-  const availableWater =
-    Math.max(
-      1,
-      soil.thetaFC -
-      soil.wp
-    );
-
-  const normalized =
-    Math.min(
-      1,
-      raw / availableWater
-    );
-
-  /*
-    Nonlinear response.
-
-    When moisture approaches
-    the wilting region, the
-    required corrective water
-    rises faster.
-  */
-
-  const multiplier =
-    Math.pow(
-      0.72 +
-      0.28 * normalized,
-      soil.nonlinear
-    );
-
-  return raw * multiplier;
-
-}
-
-
-/* =========================================================
-   FAO-56 STYLE WATER STRESS
-========================================================= */
-
-function getKs(region) {
-
-  const soil =
-    SOILS[region.soil];
-
-  const available =
-    Math.max(
-      1,
-      soil.thetaFC -
-      soil.wp
-    );
-
-  const relativeWater =
-    Math.max(
-      0,
-      Math.min(
-        1,
-        (region.moisture -
-          soil.wp) /
-        available
-      )
-    );
-
-  /*
-    Simplified FAO-56 style
-    stress coefficient.
-
-    Above approximately 55%
-    available water:
-
-    Ks ≈ 1
-
-    Below that:
-
-    Ks declines toward stress.
-  */
-
-  if (relativeWater >= 0.55) {
-
-    return 1;
-
+  constructor() {
+    this.ctx = null;
+    this.enabled = true;
   }
 
-  return Math.max(
-    0.10,
-    relativeWater / 0.55
-  );
+  init() {
 
+    if (
+      !this.ctx &&
+      (window.AudioContext || window.webkitAudioContext)
+    ) {
+
+      const AudioCtx =
+        window.AudioContext ||
+        window.webkitAudioContext;
+
+      this.ctx = new AudioCtx();
+    }
+  }
+
+  playTone(
+    freq,
+    type = 'sine',
+    duration = 0.12,
+    vol = 0.06
+  ) {
+
+    if (!this.enabled) return;
+
+    try {
+
+      this.init();
+
+      if (!this.ctx) return;
+
+      if (this.ctx.state === 'suspended') {
+        this.ctx.resume();
+      }
+
+      const osc =
+        this.ctx.createOscillator();
+
+      const gain =
+        this.ctx.createGain();
+
+      osc.type = type;
+
+      osc.frequency.setValueAtTime(
+        freq,
+        this.ctx.currentTime
+      );
+
+      gain.gain.setValueAtTime(
+        vol,
+        this.ctx.currentTime
+      );
+
+      gain.gain.exponentialRampToValueAtTime(
+        0.0001,
+        this.ctx.currentTime + duration
+      );
+
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+
+      osc.start();
+
+      osc.stop(
+        this.ctx.currentTime + duration
+      );
+
+    } catch (_) {}
+  }
+
+  playWaterSprinkler() {
+
+    if (!this.enabled) return;
+
+    try {
+
+      this.init();
+
+      if (!this.ctx) return;
+
+      const n =
+        Math.floor(
+          this.ctx.sampleRate * 0.25
+        );
+
+      const buffer =
+        this.ctx.createBuffer(
+          1,
+          n,
+          this.ctx.sampleRate
+        );
+
+      const out =
+        buffer.getChannelData(0);
+
+      for (let i = 0; i < n; i++) {
+
+        out[i] =
+          (Math.random() * 2 - 1) * 0.05;
+
+      }
+
+      const noise =
+        this.ctx.createBufferSource();
+
+      const gain =
+        this.ctx.createGain();
+
+      noise.buffer = buffer;
+
+      gain.gain.setValueAtTime(
+        0.08,
+        this.ctx.currentTime
+      );
+
+      gain.gain.exponentialRampToValueAtTime(
+        0.001,
+        this.ctx.currentTime + 0.25
+      );
+
+      noise.connect(gain);
+      gain.connect(this.ctx.destination);
+
+      noise.start();
+
+    } catch (_) {}
+  }
 }
 
 
 /* =========================================================
-   ROOT ZONE WATER
-========================================================= */
+   MAIN APPLICATION
+   ========================================================= */
 
-function rootZoneWater(region) {
+class IrrigationControllerApp {
 
-  const soil =
-    SOILS[region.soil];
+  constructor() {
 
-  const deficit =
-    nonlinearDeficit(region);
-
-  /*
-    25 hectares:
-
-    25 ha =
-    250,000 m²
-
-    1 mm over 1 m² =
-    1 litre
-  */
-
-  const areaM2 =
-    250000;
-
-  const deltaTheta =
-    deficit / 100;
-
-  return (
-    deltaTheta *
-    areaM2 *
-    soil.root *
-    1000
-  );
-
-}
+    this.sound =
+      new AudioController();
 
 
-/* =========================================================
-   BUILD ZONE MODEL
-========================================================= */
+    /* -----------------------------------------------------
+       FIELD ZONES
+       ----------------------------------------------------- */
 
-function buildZoneModel() {
+    this.regions = [
 
-  let totalDemand = 0;
+      {
+        id: 1,
+        letter: 'A',
+        name: 'Sector Alpha',
+        quadrant: 'NW',
+        crop: 'Soybeans',
+        soilType: 'clay',
 
-  state.regions.forEach(region => {
+        targetMoisture: 36,
+        currentMoisture: 23,
 
-    const soil =
-      SOILS[region.soil];
+        kFactor: 145,
 
-    region.areaM2 =
-      250000;
+        deficit: 0,
+        waterRequired: 0,
+        waterAllocated: 0,
 
-    region.target =
-      soil.thetaFC;
+        kc: 1.15,
+        ks: 1,
+        etc: 0,
+        weatherFactor: 1
+      },
 
-    region.deficit =
-      Math.max(
-        0,
-        region.target -
-        region.moisture
-      );
+      {
+        id: 2,
+        letter: 'B',
+        name: 'Sector Beta',
+        quadrant: 'NE',
+        crop: 'Maize / Corn',
+        soilType: 'sandy',
 
-    region.ks =
-      getKs(region);
+        targetMoisture: 18,
+        currentMoisture: 10,
 
-    region.kc =
-      getKc(region);
+        kFactor: 78,
 
-    /*
-      Crop water requirement:
+        deficit: 0,
+        waterRequired: 0,
+        waterAllocated: 0,
 
-      ETc =
-      ET0 × Kc × Ks
-    */
+        kc: 1.20,
+        ks: 1,
+        etc: 0,
+        weatherFactor: 1
+      },
 
-    region.etc =
-      state.weather.et0 *
-      region.kc *
-      region.ks;
+      {
+        id: 3,
+        letter: 'C',
+        name: 'Sector Gamma',
+        quadrant: 'SW',
+        crop: 'Winter Wheat',
+        soilType: 'loamy',
 
-    const etDemand =
-      Math.max(
-        0,
-        region.etc *
-        region.areaM2
-      );
+        targetMoisture: 28,
+        currentMoisture: 17,
 
-    const soilDemand =
-      rootZoneWater(region);
+        kFactor: 112,
 
-    /*
-      Blend daily atmospheric
-      demand and soil deficit
-      for the controller.
-    */
+        deficit: 0,
+        waterRequired: 0,
+        waterAllocated: 0,
 
-    region.demand =
-      Math.round(
-        Math.max(
-          etDemand * 0.65,
-          soilDemand * 0.35
-        )
-      );
+        kc: 1.15,
+        ks: 1,
+        etc: 0,
+        weatherFactor: 1
+      },
 
-    totalDemand +=
-      region.demand;
+      {
+        id: 4,
+        letter: 'D',
+        name: 'Sector Delta',
+        quadrant: 'SE',
+        crop: 'Sunflowers',
+        soilType: 'silt_loam',
 
-  });
+        targetMoisture: 32,
+        currentMoisture: 21,
 
-  return totalDemand;
+        kFactor: 126,
 
-}
+        deficit: 0,
+        waterRequired: 0,
+        waterAllocated: 0,
 
+        kc: 1.15,
+        ks: 1,
+        etc: 0,
+        weatherFactor: 1
+      }
 
-/* =========================================================
-   WEATHER GATE
-========================================================= */
-
-function weatherGate(totalDemand) {
-
-  const rain =
-    state.weather.rain;
-
-  const humidity =
-    state.weather.humidity;
+    ];
 
 
-  if (totalDemand <= 0) {
+    /* -----------------------------------------------------
+       WEATHER STATE
+       ----------------------------------------------------- */
 
-    return {
+    this.weather = {
 
-      type: "STANDBY",
+      rainForecastMm: 0,
 
-      title:
-        "STANDBY // MOISTURE TARGET MET",
+      humidityPct: 32,
 
-      reason:
-        "No irrigation deficit detected.",
+      temperatureC: 31,
 
-      saved: 0
+      windSpeedKmh: 10,
+
+      solarRadiation: null,
+
+      et0: 4.5,
+
+      source: 'manual',
+
+      location: null
 
     };
 
-  }
 
+    this.reservoir = {
 
-  if (rain >= 5) {
+      maxCapacity: 15000,
 
-    return {
-
-      type: "DELAYED",
-
-      title:
-        "IRRIGATION DELAYED // RAIN PREDICTED",
-
-      reason:
-        `${f1(rain)} mm precipitation is forecast. Preserve reservoir water and reassess after the rain window.`,
-
-      saved:
-        totalDemand
+      waterAvailable: 6000
 
     };
 
-  }
+
+    this.optimizationStrategy =
+      'smart_vulnerability';
 
 
-  if (
-    humidity > 80 &&
-    rain >= 2
-  ) {
+    this.dispatchStatus = {
 
-    return {
-
-      type: "DELAYED",
+      type: 'INSTANT',
 
       title:
-        "IRRIGATION DELAYED // HUMID + RAIN",
+        'INSTANT IRRIGATION AUTHORIZED',
 
-      reason:
-        `High RH (${f1(humidity)}%) with ${f1(rain)} mm rain reduces immediate irrigation need.`,
+      reason: '',
 
-      saved:
-        totalDemand
+      waterSaved: 0
 
     };
 
+
+    this.isSimulating = false;
+
+    this.dom = {};
+
+    this.weatherRequestId = 0;
   }
 
 
-  return {
+  /* =======================================================
+     INITIALIZATION
+     ======================================================= */
 
-    type: "INSTANT",
+  init() {
 
-    title:
-      "INSTANT IRRIGATION AUTHORIZED",
+    this.cacheStaticDOM();
 
-    reason:
-      `Weather window is open: ${f1(rain)} mm rain and ${f1(humidity)}% RH.`,
+    this.randomizeAllKFactors(false);
 
-    saved: 0
+    this.renderQuadrantsOnce();
 
-  };
+    this.bindEvents();
 
-}
+    this.updateWeatherUI();
 
+    this.recomputeAll();
 
-/* =========================================================
-   RESERVOIR OPTIMIZATION
-========================================================= */
-
-function allocateWater(totalDemand) {
-
-  let pool =
-    state.reservoir;
-
-
-  state.regions.forEach(
-    r => r.allocated = 0
-  );
-
-
-  if (
-    totalDemand <= pool
-  ) {
-
-    state.regions.forEach(
-      r =>
-        r.allocated =
-        r.demand
+    this.logTelemetry(
+      'SYSTEM',
+      'ArgiFlow live weather engine active.'
     );
 
-    return;
-
-  }
-
-
-  /*
-    PROPORTIONAL
-  */
-
-  if (
-    state.strategy ===
-    "proportional"
-  ) {
-
-    state.regions.forEach(
-      r => {
-
-        r.allocated =
-          Math.floor(
-            r.demand *
-            pool /
-            Math.max(
-              1,
-              totalDemand
-            )
-          );
-
-      }
+    this.logTelemetry(
+      'SYSTEM',
+      'Select a location to load live weather.'
     );
-
-    return;
-
   }
 
 
-  /*
-    CRITICAL TRIAGE
-  */
+  /* =======================================================
+     DOM CACHE
+     ======================================================= */
 
-  if (
-    state.strategy ===
-    "triage"
-  ) {
+  cacheStaticDOM() {
 
-    const sorted =
-      [...state.regions]
-        .sort(
-          (a,b) =>
-            b.deficit -
-            a.deficit
-        );
+    const ids = [
+
+      'kpi-total-demand',
+      'kpi-avg-deficit',
+
+      'kpi-water-reserved',
+      'kpi-reserve-ratio',
+
+      'kpi-dispatch-badge',
+      'kpi-dispatch-reason',
+
+      'aerial-total-water',
+      'aerial-fulfillment-pct',
+
+      'weather-decision-card',
+      'decision-title',
+      'decision-desc',
+      'decision-badge',
+
+      'decision-status-icon',
+
+      'dec-rain-gate',
+      'dec-humid-gate',
+      'dec-savings',
+
+      'tank-fill-bar',
+      'tank-demand-marker',
+
+      'shortage-status-badge',
+
+      'slider-reservoir',
+      'reservoir-val-text',
+
+      'allocation-table-body',
+
+      'sum-demanded',
+      'sum-allocated',
+      'sum-unmet',
+
+      'terminal-logs-body',
+
+      'location-search',
+      'btn-location-search',
+      'btn-use-location',
+      'location-results',
+      'selected-location',
+
+      'weather-source-status',
+
+      'live-et0',
+      'live-etc',
+      'live-weather-factor',
+
+      'slider-rain',
+      'slider-humidity',
+      'slider-temp',
+
+      'val-rain-mm',
+      'val-humidity',
+      'val-temperature',
+
+      'weather-preset-select'
+    ];
 
 
-    sorted.forEach(region => {
+    ids.forEach(id => {
 
-      const amount =
-        Math.min(
-          pool,
-          region.demand
-        );
-
-      region.allocated =
-        amount;
-
-      pool -= amount;
+      this.dom[id] =
+        document.getElementById(id);
 
     });
-
-    return;
-
   }
 
 
-  /*
-    SMART VULNERABILITY
+  /* =======================================================
+     K FACTOR
+     ======================================================= */
 
-    Weight:
+  generateRandomK(soilType) {
 
-    moisture deficit
-    × soil vulnerability
-    × water stress
-  */
+    const p =
+      SOIL_PROFILES[soilType] ||
+      SOIL_PROFILES.loamy;
 
-  const weights =
-    state.regions.map(
-      region =>
-
-        region.deficit *
-        SOILS[
-          region.soil
-        ].vulnerability *
-        (
-          1 +
-          (1 - region.ks)
-        )
-
+    return Math.round(
+      p.kMin +
+      Math.random() *
+      (p.kMax - p.kMin)
     );
+  }
 
 
-  const weightSum =
-    weights.reduce(
-      (a,b) => a + b,
-      0
-    );
+  randomizeAllKFactors(log = true) {
 
+    this.regions.forEach(region => {
 
-  state.regions.forEach(
-    (region,index) => {
-
-      const share =
-        weights[index] /
-        Math.max(
-          0.001,
-          weightSum
+      region.kFactor =
+        this.generateRandomK(
+          region.soilType
         );
-
-      region.allocated =
-        Math.min(
-          region.demand,
-          Math.floor(
-            pool * share
-          )
-        );
-
-    }
-  );
-
-}
-
-
-/* =========================================================
-   RENDER ZONES
-========================================================= */
-
-function renderZones() {
-
-  const container =
-    $("zones");
-
-  container.innerHTML = "";
-
-
-  state.regions.forEach(
-    region => {
-
-      const soil =
-        SOILS[
-          region.soil
-        ];
-
-      const crop =
-        CROPS[
-          region.crop
-        ];
-
-
-      const card =
-        document.createElement(
-          "article"
-        );
-
-
-      card.className =
-        `zone ${
-          region.sensorOk
-            ? ""
-            : "failed"
-        }`;
-
-
-      card.id =
-        `zone-${region.id}`;
-
-
-      card.innerHTML = `
-
-        <div class="zone-head">
-
-          <div class="zone-name">
-
-            <span class="zone-letter">
-              ${region.letter}
-            </span>
-
-            <div>
-
-              <div class="zone-title">
-                ${region.name}
-              </div>
-
-              <div class="zone-meta">
-                ${region.quadrant}
-                • 25 ha
-              </div>
-
-            </div>
-
-          </div>
-
-          <span class="crop">
-            ${crop.name}
-          </span>
-
-        </div>
-
-
-        <div class="zone-controls">
-
-          <div class="form-group">
-
-            <label>
-
-              Soil
-
-              <select
-                data-id="${region.id}"
-                class="soil"
-              >
-
-                <option value="clay">
-                  Clay
-                </option>
-
-                <option value="sandy">
-                  Sandy
-                </option>
-
-                <option value="loamy">
-                  Loamy
-                </option>
-
-                <option value="silt_loam">
-                  Silt Loam
-                </option>
-
-                <option value="peaty">
-                  Peaty
-                </option>
-
-              </select>
-
-            </label>
-
-          </div>
-
-
-          <div class="form-group">
-
-            <label>
-
-              Crop stage
-
-              <select
-                data-id="${region.id}"
-                class="stage"
-              >
-
-                ${STAGES.map(
-                  stage => `
-                    <option
-                      value="${stage}"
-                    >
-                      ${STAGE_LABEL[stage]}
-                    </option>
-                  `
-                ).join("")}
-
-              </select>
-
-            </label>
-
-          </div>
-
-        </div>
-
-
-        <div class="zone-controls">
-
-          <div class="form-group">
-
-            <label>
-
-              Crop
-
-              <select
-                data-id="${region.id}"
-                class="crop-select"
-              >
-
-                <option value="soybean">
-                  Soybean
-                </option>
-
-                <option value="maize">
-                  Maize
-                </option>
-
-                <option value="wheat">
-                  Winter Wheat
-                </option>
-
-                <option value="sunflower">
-                  Sunflower
-                </option>
-
-              </select>
-
-            </label>
-
-          </div>
-
-
-          <div class="form-group">
-
-            <label>
-
-              Sensor moisture
-
-              <b id="mval-${region.id}">
-                ${f1(region.moisture)}%
-              </b>
-
-              <input
-                data-id="${region.id}"
-                class="moisture-input"
-                type="range"
-                min="0"
-                max="55"
-                step=".5"
-                value="${region.moisture}"
-              >
-
-            </label>
-
-          </div>
-
-        </div>
-
-
-        <div class="sensor-line">
-
-          <span>
-
-            Sensor:
-
-            <b
-              class="${
-                region.sensorOk
-                  ? "sensor-ok"
-                  : "sensor-fail"
-              }"
-            >
-
-              ${
-                region.sensorOk
-                  ? "VALID"
-                  : "FAILED → FALLBACK"
-              }
-
-            </b>
-
-          </span>
-
-
-          <button
-            class="sensor-toggle"
-            data-id="${region.id}"
-          >
-
-            ${
-              region.sensorOk
-                ? "Simulate failure"
-                : "Restore sensor"
-            }
-
-          </button>
-
-        </div>
-
-
-        <div class="moisture">
-
-          <div class="moisture-head">
-
-            <span>
-              Moisture
-            </span>
-
-            <span>
-              ${f1(region.moisture)}%
-              /
-              ${soil.thetaFC}%
-              target
-            </span>
-
-          </div>
-
-
-          <div class="meter">
-
-            <div
-              id="meter-${region.id}"
-              class="meter-current"
-            ></div>
-
-            <div
-              id="target-${region.id}"
-              class="meter-target"
-            ></div>
-
-          </div>
-
-        </div>
-
-
-        <div class="zone-stats">
-
-          <div class="zone-stat">
-
-            <span>
-              Deficit
-            </span>
-
-            <b id="def-${region.id}">
-              —
-            </b>
-
-          </div>
-
-
-          <div class="zone-stat">
-
-            <span>
-              Kc
-            </span>
-
-            <b id="kc-${region.id}">
-              —
-            </b>
-
-          </div>
-
-
-          <div class="zone-stat">
-
-            <span>
-              ETc
-            </span>
-
-            <b id="etc-${region.id}">
-              —
-            </b>
-
-          </div>
-
-
-          <div class="zone-stat">
-
-            <span>
-              Demand
-            </span>
-
-            <b id="demand-${region.id}">
-              —
-            </b>
-
-          </div>
-
-
-          <div class="zone-stat">
-
-            <span>
-              Allocated
-            </span>
-
-            <b id="alloc-${region.id}">
-              —
-            </b>
-
-          </div>
-
-
-          <div class="zone-stat">
-
-            <span>
-              Ks
-            </span>
-
-            <b id="ks-${region.id}">
-              —
-            </b>
-
-          </div>
-
-        </div>
-
-      `;
-
-
-      container.appendChild(card);
-
-
-      card.querySelector(
-        ".soil"
-      ).value =
-        region.soil;
-
-
-      card.querySelector(
-        ".stage"
-      ).value =
-        region.stage;
-
-
-      card.querySelector(
-        ".crop-select"
-      ).value =
-        region.crop;
 
     });
 
 
-  bindZoneEvents();
+    if (log) {
 
-}
-
-
-/* =========================================================
-   ZONE EVENTS
-========================================================= */
-
-function bindZoneEvents() {
-
-
-  document
-    .querySelectorAll(".soil")
-    .forEach(
-      element => {
-
-        element.onchange =
-          event => {
-
-            const region =
-              getRegion(
-                event.target.dataset.id
-              );
-
-            region.soil =
-              event.target.value;
-
-            render();
-
-          };
-
-      }
-    );
-
-
-  document
-    .querySelectorAll(".stage")
-    .forEach(
-      element => {
-
-        element.onchange =
-          event => {
-
-            const region =
-              getRegion(
-                event.target.dataset.id
-              );
-
-            region.stage =
-              event.target.value;
-
-            render();
-
-          };
-
-      }
-    );
-
-
-  document
-    .querySelectorAll(".crop-select")
-    .forEach(
-      element => {
-
-        element.onchange =
-          event => {
-
-            const region =
-              getRegion(
-                event.target.dataset.id
-              );
-
-            region.crop =
-              event.target.value;
-
-            render();
-
-          };
-
-      }
-    );
-
-
-  document
-    .querySelectorAll(".moisture-input")
-    .forEach(
-      element => {
-
-        element.oninput =
-          event => {
-
-            const region =
-              getRegion(
-                event.target.dataset.id
-              );
-
-            region.moisture =
-              Number(
-                event.target.value
-              );
-
-            region.lastGood =
-              region.moisture;
-
-            render();
-
-          };
-
-      }
-    );
-
-
-  document
-    .querySelectorAll(".sensor-toggle")
-    .forEach(
-      element => {
-
-        element.onclick =
-          event => {
-
-            const region =
-              getRegion(
-                event.target.dataset.id
-              );
-
-
-            region.sensorOk =
-              !region.sensorOk;
-
-
-            if (
-              region.sensorOk
-            ) {
-
-              region.moisture =
-                region.lastGood;
-
-            }
-
-
-            renderZones();
-
-            render();
-
-
-            log(
-              `Sensor ${region.letter}: ${
-                region.sensorOk
-                  ? "restored"
-                  : "failure injected; fallback estimator active"
-              }`,
-              "SENSOR"
-            );
-
-          };
-
-      }
-    );
-
-}
-
-
-/* =========================================================
-   MAIN RENDER
-========================================================= */
-
-function render() {
-
-  const total =
-    buildZoneModel();
-
-
-  const gate =
-    weatherGate(
-      total
-    );
-
-
-  state.gate =
-    gate;
-
-
-  allocateWater(
-    total
-  );
-
-
-  const allocated =
-    state.regions.reduce(
-      (sum, region) =>
-        sum + region.allocated,
-      0
-    );
-
-
-  const coverage =
-    total > 0
-      ? Math.min(
-          100,
-          allocated / total * 100
-        )
-      : 100;
-
-
-  /*
-    KPI
-  */
-
-  $("kpi-et0").textContent =
-    `${f1(state.weather.et0)} mm/day`;
-
-
-  $("kpi-demand").textContent =
-    `${fmt(total)} L`;
-
-
-  $("kpi-reservoir").textContent =
-    `${fmt(state.reservoir)} L`;
-
-
-  $("kpi-coverage").textContent =
-    `Allocation coverage ${f1(coverage)}%`;
-
-
-  $("kpi-dispatch").textContent =
-    gate.type;
-
-
-  $("kpi-dispatch-reason").textContent =
-    gate.type === "INSTANT"
-      ? "Weather window open"
-      : gate.type === "DELAYED"
-        ? "Rain / humidity gate"
-        : "No deficit";
-
-
-  /*
-    Weather
-  */
-
-  $("w-rain").textContent =
-    `${f1(state.weather.rain)} mm`;
-
-  $("w-temp").textContent =
-    `${f1(state.weather.temperature)} °C`;
-
-  $("w-rh").textContent =
-    `${f1(state.weather.humidity)}%`;
-
-  $("w-wind").textContent =
-    `${f1(state.weather.wind)} km/h`;
-
-  $("w-et0").textContent =
-    `${f1(state.weather.et0)} mm`;
-
-  $("w-vpd").textContent =
-    `${f1(state.weather.vpd)} kPa`;
-
-
-  /*
-    Decision
-  */
-
-  $("decision-title").textContent =
-    gate.title;
-
-  $("decision-text").textContent =
-    gate.reason;
-
-  $("decision-badge").textContent =
-    gate.type;
-
-
-  $("decision-badge").className =
-    `badge ${
-      gate.type === "INSTANT" ||
-      gate.type === "STANDBY"
-        ? "success"
-        : gate.type === "DELAYED"
-          ? "warning"
-          : "danger"
-    }`;
-
-
-  $("decision").className =
-    `decision ${
-      gate.type === "DELAYED"
-        ? "delayed"
-        : ""
-    }`;
-
-
-  /*
-    Zones
-  */
-
-  state.regions.forEach(
-    region => {
-
-      const soil =
-        SOILS[
-          region.soil
-        ];
-
-
-      $(
-        `mval-${region.id}`
-      ).textContent =
-        `${f1(region.moisture)}%`;
-
-
-      $(
-        `meter-${region.id}`
-      ).style.transform =
-        `scaleX(${
-          Math.min(
-            1,
-            region.moisture / 55
-          )
-        })`;
-
-
-      $(
-        `target-${region.id}`
-      ).style.left =
-        `${
-          Math.min(
-            100,
-            soil.thetaFC / 55 * 100
-          )
-        }%`;
-
-
-      $(
-        `def-${region.id}`
-      ).textContent =
-        `${f1(region.deficit)}%`;
-
-
-      $(
-        `kc-${region.id}`
-      ).textContent =
-        f1(region.kc);
-
-
-      $(
-        `etc-${region.id}`
-      ).textContent =
-        `${f1(region.etc)} mm`;
-
-
-      $(
-        `demand-${region.id}`
-      ).textContent =
-        `${fmt(region.demand)} L`;
-
-
-      $(
-        `alloc-${region.id}`
-      ).textContent =
-        `${fmt(region.allocated)} L`;
-
-
-      $(
-        `ks-${region.id}`
-      ).textContent =
-        f1(region.ks);
-
-    });
-
-
-  renderTable();
-
-  renderSensorHealth();
-
-  renderComparison(
-    total,
-    gate
-  );
-
-}
-
-
-/* =========================================================
-   ALLOCATION TABLE
-========================================================= */
-
-function renderTable() {
-
-  $("allocation-body").innerHTML =
-
-    state.regions
-      .map(region => {
-
-        const percentage =
-          region.demand > 0
-            ? Math.min(
-                100,
-                region.allocated /
-                region.demand *
-                100
-              )
-            : 100;
-
-
-        return `
-
-          <tr>
-
-            <td>
-              <b>
-                ${region.letter}
-              </b>
-            </td>
-
-            <td>
-              ${f1(region.etc)} mm
-            </td>
-
-            <td>
-              ${fmt(region.demand)} L
-            </td>
-
-            <td>
-              ${fmt(region.allocated)} L
-            </td>
-
-            <td>
-
-              <span
-                class="progress ${
-                  percentage < 100
-                    ? "short"
-                    : ""
-                }"
-              >
-
-                <i
-                  style="
-                    transform:
-                      scaleX(
-                        ${percentage / 100}
-                      )
-                  "
-                ></i>
-
-              </span>
-
-              ${f1(percentage)}%
-
-            </td>
-
-          </tr>
-
-        `;
-
-      })
-      .join("");
-
-}
-
-
-/* =========================================================
-   SENSOR HEALTH
-========================================================= */
-
-function renderSensorHealth() {
-
-  $("sensor-health").innerHTML =
-
-    state.regions
-      .map(
-        region => `
-
-          <div class="sensor-card">
-
-            <span>
-              Zone ${region.letter}
-            </span>
-
-            <b
-              class="${
-                region.sensorOk
-                  ? "sensor-ok"
-                  : "sensor-fail"
-              }"
-            >
-
-              ${
-                region.sensorOk
-                  ? "● SENSOR VALID"
-                  : "⚠ FALLBACK MODEL"
-              }
-
-            </b>
-
-            <small>
-              Last valid:
-              ${f1(region.lastGood)}%
-            </small>
-
-          </div>
-
-        `
-      )
-      .join("");
-
-}
-
-
-/* =========================================================
-   FIXED SCHEDULE
-========================================================= */
-
-function fixedSchedule() {
-
-  let water = 0;
-
-  let events = 0;
-
-  let stress = 0;
-
-
-  state.regions.forEach(
-    region => {
-
-      const soil =
-        SOILS[
-          region.soil
-        ];
-
-
-      /*
-        Fixed schedule:
-        water each zone to
-        80% of field capacity
-        once per day.
-
-        It does NOT react to
-        rain, crop stage or
-        reservoir shortage.
-      */
-
-      const fixedTarget =
-        soil.thetaFC * 0.80;
-
-
-      const deficit =
-        Math.max(
-          0,
-          fixedTarget -
-          region.moisture
-        );
-
-
-      const liters =
-        (
-          deficit / 100
-        ) *
-        250000 *
-        soil.root *
-        1000;
-
-
-      water += liters;
-
-      events++;
-
-
-      if (
-        region.moisture <
-        soil.wp + 2
-      ) {
-
-        stress++;
-
-      }
-
-    });
-
-
-  return {
-    water,
-    events,
-    stress
-  };
-
-}
-
-
-/* =========================================================
-   DYNAMIC VS FIXED
-========================================================= */
-
-function renderComparison(
-  totalDemand,
-  gate
-) {
-
-  const dynamic =
-    gate.type === "DELAYED" ||
-    gate.type === "STANDBY"
-      ? 0
-      : state.regions.reduce(
-          (sum, region) =>
-            sum + region.allocated,
-          0
-        );
-
-
-  const fixed =
-    fixedSchedule();
-
-
-  const saved =
-    Math.max(
-      0,
-      fixed.water -
-      dynamic
-    );
-
-
-  const savedPercent =
-    fixed.water > 0
-      ? saved /
-        fixed.water *
-        100
-      : 0;
-
-
-  const dynamicStress =
-    state.regions.filter(
-      region =>
-        region.moisture <
-        SOILS[
-          region.soil
-        ].wp + 2
-    ).length;
-
-
-  $("dynamic-water").textContent =
-    `${fmt(dynamic)} L`;
-
-
-  $("dynamic-events").textContent =
-    `${dynamic > 0
-      ? state.regions.filter(
-          r => r.allocated > 0
-        ).length
-      : 0
-    } zone events`;
-
-
-  $("fixed-water").textContent =
-    `${fmt(fixed.water)} L`;
-
-
-  $("fixed-events").textContent =
-    `${fixed.events} scheduled events`;
-
-
-  $("saved-water").textContent =
-    `${fmt(saved)} L`;
-
-
-  $("saved-pct").textContent =
-    `${f1(savedPercent)}% lower water use in this scenario`;
-
-
-  $("stress-result").textContent =
-    `${dynamicStress} zone(s)`;
-
-
-  /*
-    Plotly comparison chart
-  */
-
-  if (
-    window.Plotly
-  ) {
-
-    Plotly.react(
-
-      "comparison-chart",
-
-      [
-
-        {
-
-          x: [
-            "Dynamic Controller",
-            "Fixed Schedule"
-          ],
-
-          y: [
-            dynamic,
-            fixed.water
-          ],
-
-          type: "bar",
-
-          text: [
-            `${fmt(dynamic)} L`,
-            `${fmt(fixed.water)} L`
-          ],
-
-          textposition:
-            "auto"
-
-        }
-
-      ],
-
-      {
-
-        margin: {
-          t: 20,
-          r: 20,
-          b: 55,
-          l: 70
-        },
-
-        paper_bgcolor:
-          "transparent",
-
-        plot_bgcolor:
-          "transparent",
-
-        yaxis: {
-          title: "Water Used (L)"
-        },
-
-        font: {
-          family:
-            "Plus Jakarta Sans"
-        }
-
-      },
-
-      {
-        displayModeBar: false,
-        responsive: true
-      }
-
-    );
-
-  }
-
-}
-
-
-/* =========================================================
-   LOCATION SEARCH
-========================================================= */
-
-async function searchLocation(
-  query
-) {
-
-  if (!query) return;
-
-
-  const url =
-    "https://geocoding-api.open-meteo.com/v1/search" +
-    `?name=${encodeURIComponent(query)}` +
-    "&count=5" +
-    "&language=en" +
-    "&format=json";
-
-
-  try {
-
-    const response =
-      await fetch(url);
-
-
-    if (!response.ok) {
-
-      throw new Error(
-        "Geocoding failed"
-      );
-
-    }
-
-
-    const data =
-      await response.json();
-
-
-    const results =
-      $("location-results");
-
-
-    results.innerHTML =
-      "";
-
-
-    (
-      data.results || []
-    ).forEach(
-      location => {
-
-        const button =
-          document.createElement(
-            "button"
-          );
-
-
-        button.className =
-          "location-chip";
-
-
-        button.textContent =
-          `${location.name}, ${
-            location.admin1 ||
-            location.country ||
-            ""
-          }`;
-
-
-        button.onclick =
-          () => {
-
-            state.location = {
-
-              name:
-                button.textContent,
-
-              lat:
-                location.latitude,
-
-              lon:
-                location.longitude
-
-            };
-
-
-            $("location-input")
-              .value =
-              button.textContent;
-
-
-            results.innerHTML =
-              "";
-
-
-            fetchWeather();
-
-          };
-
-
-        results.appendChild(
-          button
-        );
-
-      }
-    );
-
-
-  } catch (error) {
-
-    log(
-      "Location search failed.",
-      "WARN"
-    );
-
-  }
-
-}
-
-
-/* =========================================================
-   OPEN-METEO WEATHER
-========================================================= */
-
-async function fetchWeather() {
-
-  const {
-    lat,
-    lon
-  } =
-    state.location;
-
-
-  /*
-    Daily variables:
-
-    temperature
-    precipitation
-    wind
-    radiation
-    FAO-56 ET0
-
-    Hourly variables:
-
-    humidity
-    VPD
-    temperature
-    wind
-  */
-
-  const dailyVariables =
-    [
-      "temperature_2m_max",
-      "temperature_2m_min",
-      "precipitation_sum",
-      "precipitation_probability_max",
-      "wind_speed_10m_max",
-      "shortwave_radiation_sum",
-      "et0_fao_evapotranspiration"
-    ].join(",");
-
-
-  const hourlyVariables =
-    [
-      "relative_humidity_2m",
-      "temperature_2m",
-      "vapour_pressure_deficit",
-      "wind_speed_10m",
-      "precipitation"
-    ].join(",");
-
-
-  const url =
-    "https://api.open-meteo.com/v1/forecast" +
-
-    `?latitude=${lat}` +
-
-    `&longitude=${lon}` +
-
-    "&timezone=auto" +
-
-    "&forecast_days=7" +
-
-    `&daily=${dailyVariables}` +
-
-    `&hourly=${hourlyVariables}`;
-
-
-  try {
-
-    const response =
-      await fetch(url);
-
-
-    if (!response.ok) {
-
-      throw new Error(
-        "Open-Meteo request failed"
-      );
-
-    }
-
-
-    const data =
-      await response.json();
-
-
-    state.weather.live =
-      true;
-
-
-    state.weather.forecast =
-      data.daily;
-
-
-    const daily =
-      data.daily;
-
-
-    const hourly =
-      data.hourly;
-
-
-    /*
-      Find current hour.
-    */
-
-    const now =
-      new Date();
-
-
-    let hourIndex =
-      hourly.time.findIndex(
-        time =>
-          new Date(time) >= now
-      );
-
-
-    if (hourIndex < 0) {
-
-      hourIndex = 0;
-
-    }
-
-
-    /*
-      Real forecast values
-    */
-
-    state.weather.rain =
-      Number(
-        daily
-          .precipitation_sum?.[0]
-        || 0
-      );
-
-
-    state.weather.temperature =
-      Number(
-        daily
-          .temperature_2m_max?.[0]
-        || 30
-      );
-
-
-    state.weather.et0 =
-      Number(
-        daily
-          .et0_fao_evapotranspiration?.[0]
-        || 4
-      );
-
-
-    state.weather.wind =
-      Number(
-        daily
-          .wind_speed_10m_max?.[0]
-        || 2
-      );
-
-
-    state.weather.humidity =
-      Number(
-        hourly
-          .relative_humidity_2m?.[
-            hourIndex
-          ]
-        || 45
-      );
-
-
-    state.weather.vpd =
-      Number(
-        hourly
-          .vapour_pressure_deficit?.[
-            hourIndex
-          ]
-        || 1.2
-      );
-
-
-    /*
-      UI status
-    */
-
-    $("api-status").innerHTML =
-      `
-      <span class="pulse-dot"></span>
-      <span>
-        WEATHER: OPEN-METEO LIVE
-      </span>
-      `;
-
-
-    $("weather-badge").textContent =
-      "LIVE API";
-
-
-    $("weather-badge")
-      .className =
-      "badge success";
-
-
-    /*
-      Manual sliders reflect
-      live values.
-    */
-
-    $("rain-slider").value =
-      Math.min(
-        50,
-        state.weather.rain
-      );
-
-
-    $("rh-slider").value =
-      state.weather.humidity;
-
-
-    $("temp-slider").value =
-      state.weather.temperature;
-
-
-    $("rain-val").textContent =
-      `${f1(
-        state.weather.rain
-      )} mm`;
-
-
-    $("rh-val").textContent =
-      `${f1(
-        state.weather.humidity
-      )}%`;
-
-
-    $("temp-val").textContent =
-      `${f1(
-        state.weather.temperature
-      )}°C`;
-
-
-    log(
-      `Open-Meteo forecast loaded for ${state.location.name}. ET₀ = ${f1(state.weather.et0)} mm/day.`,
-      "WEATHER"
-    );
-
-
-    render();
-
-    renderForecast();
-
-
-  } catch (error) {
-
-    /*
-      API failure:
-
-      Keep application functional
-      using manual weather controls.
-    */
-
-    state.weather.live =
-      false;
-
-
-    $("api-status").innerHTML =
-      `
-      <span class="pulse-dot"></span>
-      <span>
-        WEATHER: MANUAL FALLBACK
-      </span>
-      `;
-
-
-    $("weather-badge").textContent =
-      "FALLBACK";
-
-
-    $("weather-badge")
-      .className =
-      "badge warning";
-
-
-    log(
-      "Open-Meteo unavailable. Manual weather fallback active.",
-      "WARN"
-    );
-
-
-    render();
-
-  }
-
-}
-
-
-/* =========================================================
-   FORECAST PLOT
-========================================================= */
-
-function renderForecast() {
-
-  if (
-    !window.Plotly ||
-    !state.weather.forecast
-  ) {
-
-    return;
-
-  }
-
-
-  const forecast =
-    state.weather.forecast;
-
-
-  Plotly.react(
-
-    "forecast-chart",
-
-    [
-
-      {
-
-        x:
-          forecast.time,
-
-        y:
-          forecast
-            .et0_fao_evapotranspiration,
-
-        name:
-          "ET₀ (mm/day)",
-
-        type:
-          "scatter",
-
-        mode:
-          "lines+markers"
-
-      },
-
-      {
-
-        x:
-          forecast.time,
-
-        y:
-          forecast
-            .precipitation_sum,
-
-        name:
-          "Precipitation (mm)",
-
-        type:
-          "bar"
-
-      }
-
-    ],
-
-    {
-
-      margin: {
-        t: 15,
-        r: 20,
-        b: 45,
-        l: 50
-      },
-
-      paper_bgcolor:
-        "transparent",
-
-      plot_bgcolor:
-        "transparent",
-
-      xaxis: {
-        title: "Date"
-      },
-
-      yaxis: {
-        title: "mm"
-      },
-
-      legend: {
-        orientation: "h"
-      },
-
-      font: {
-        family:
-          "Plus Jakarta Sans"
-      }
-
-    },
-
-    {
-
-      displayModeBar:
-        false,
-
-      responsive:
-        true
-
-    }
-
-  );
-
-}
-
-
-/* =========================================================
-   IRRIGATION CYCLE
-========================================================= */
-
-function runIrrigationCycle() {
-
-  if (
-    state.simulating
-  ) return;
-
-
-  const gate =
-    state.gate;
-
-
-  /*
-    Rain gate.
-  */
-
-  if (
-    gate.type ===
-    "DELAYED"
-  ) {
-
-    log(
-      gate.reason,
-      "GATE"
-    );
-
-
-    playTone(220);
-
-
-    alert(
-      `[ArgiFlow]
-
-IRRIGATION DELAYED
-
-${gate.reason}`
-    );
-
-
-    return;
-
-  }
-
-
-  const total =
-    state.regions.reduce(
-      (sum, region) =>
-        sum +
-        region.allocated,
-      0
-    );
-
-
-  if (!total) {
-
-    return;
-
-  }
-
-
-  state.simulating =
-    true;
-
-
-  log(
-    `Dispatching ${fmt(total)} L across eligible zones.`,
-    "ACTION"
-  );
-
-
-  playTone(700);
-
-
-  const startMoisture =
-    state.regions.map(
-      r => r.moisture
-    );
-
-
-  const startReservoir =
-    state.reservoir;
-
-
-  const startTime =
-    performance.now();
-
-
-  const duration =
-    1800;
-
-
-  state.regions.forEach(
-    region => {
-
-      if (
-        region.allocated > 0
-      ) {
-
-        $(
-          `zone-${region.id}`
-        )
-          .classList
-          .add(
-            "irrigating"
-          );
-
-      }
-
-    }
-  );
-
-
-  function animate(currentTime) {
-
-    const progress =
-      Math.min(
-        1,
-        (
-          currentTime -
-          startTime
-        ) /
-        duration
-      );
-
-
-    state.regions.forEach(
-      (region,index) => {
+      this.regions.forEach(region => {
 
         if (
-          region.allocated <= 0
+          this.dom[`kVal_${region.id}`]
         ) {
 
-          return;
+          this.dom[
+            `kVal_${region.id}`
+          ].textContent =
+            `${region.kFactor} L/%`;
 
         }
 
+      });
 
-        /*
-          Convert allocated
-          water into moisture lift.
-        */
+      this.logTelemetry(
+        'SYSTEM',
+        'Hydrology K-factors re-calibrated.'
+      );
 
-        const moistureLift =
-          (
-            region.allocated /
-            (
-              region.areaM2 *
-              SOILS[
-                region.soil
-              ].root *
-              1000
-            )
-          ) *
-          100;
+      this.sound.playTone(520);
+    }
+  }
 
 
-        region.moisture =
-          Math.min(
-            region.target,
+  /* =======================================================
+     EVENTS
+     ======================================================= */
 
-            startMoisture[index] +
-            moistureLift *
-            progress
+  bindEvents() {
+
+    const soundToggle =
+      document.getElementById(
+        'btn-sound-toggle'
+      );
+
+
+    soundToggle?.addEventListener(
+      'click',
+      () => {
+
+        this.sound.enabled =
+          !this.sound.enabled;
+
+        document
+          .getElementById('sound-icon-on')
+          ?.classList.toggle(
+            'hidden',
+            !this.sound.enabled
+          );
+
+        document
+          .getElementById('sound-icon-off')
+          ?.classList.toggle(
+            'hidden',
+            this.sound.enabled
+          );
+
+      }
+    );
+
+
+    document
+      .getElementById('btn-quick-randomize')
+      ?.addEventListener(
+        'click',
+        () => this.randomizeScenario()
+      );
+
+
+    document
+      .getElementById('btn-reroll-k')
+      ?.addEventListener(
+        'click',
+        () => {
+
+          this.randomizeAllKFactors(true);
+
+          this.recomputeAll();
+
+        }
+      );
+
+
+    document
+      .getElementById('btn-run-simulation')
+      ?.addEventListener(
+        'click',
+        () => this.executeIrrigationCycle()
+      );
+
+
+    document
+      .getElementById('btn-evaporate-day')
+      ?.addEventListener(
+        'click',
+        () => {
+
+          const loss =
+            Math.max(
+              1,
+              this.weather.et0 * 0.55
+            );
+
+          this.regions.forEach(region => {
+
+            region.currentMoisture =
+              Math.max(
+                2,
+                Math.round(
+                  (
+                    region.currentMoisture -
+                    loss
+                  ) * 10
+                ) / 10
+              );
+
+          });
+
+
+          this.logTelemetry(
+            'ACTION',
+            `Daily ET loss applied using ET₀ ${this.weather.et0.toFixed(2)} mm/day.`
           );
 
 
-        region.lastGood =
-          region.moisture;
+          this.sound.playTone(
+            330,
+            'sawtooth',
+            0.15
+          );
+
+
+          this.recomputeAll();
+
+        }
+      );
+
+
+    /* Reservoir */
+
+    this.dom.sliderReservoir
+      ?.addEventListener(
+        'input',
+        event => {
+
+          this.reservoir.waterAvailable =
+            parseInt(
+              event.target.value,
+              10
+            );
+
+          this.dom.reservoirValText.textContent =
+            this.reservoir.waterAvailable
+              .toLocaleString();
+
+          this.recomputeAll();
+
+        }
+      );
+
+
+    document
+      .querySelectorAll('.chip-btn')
+      .forEach(button => {
+
+        button.addEventListener(
+          'click',
+          event => {
+
+            const value =
+              parseInt(
+                event.currentTarget.dataset.val,
+                10
+              );
+
+            this.reservoir.waterAvailable =
+              value;
+
+            if (
+              this.dom.sliderReservoir
+            ) {
+
+              this.dom.sliderReservoir.value =
+                value;
+
+            }
+
+            this.dom.reservoirValText.textContent =
+              value.toLocaleString();
+
+            this.recomputeAll();
+
+          }
+        );
 
       });
 
 
-    state.reservoir =
-      Math.max(
-        0,
+    /* Optimization */
 
-        startReservoir -
-        total *
-        progress
-      );
+    document
+      .getElementById('select-opt-strategy')
+      ?.addEventListener(
+        'change',
+        event => {
 
+          this.optimizationStrategy =
+            event.target.value;
 
-    render();
-
-
-    if (
-      progress < 1
-    ) {
-
-      requestAnimationFrame(
-        animate
-      );
-
-    } else {
-
-      state.simulating =
-        false;
-
-
-      state.regions.forEach(
-        region => {
-
-          $(
-            `zone-${region.id}`
-          )
-            .classList
-            .remove(
-              "irrigating"
+          const desc =
+            document.getElementById(
+              'opt-strategy-desc'
             );
+
+          if (desc) {
+
+            if (
+              this.optimizationStrategy ===
+              'smart_vulnerability'
+            ) {
+
+              desc.innerHTML =
+                '<strong>Smart Vulnerability:</strong> Prioritizes deficit using soil drought vulnerability.';
+
+            }
+
+            else if (
+              this.optimizationStrategy ===
+              'proportional'
+            ) {
+
+              desc.innerHTML =
+                '<strong>Proportional Deficit Rationing:</strong> Scales each zone against total demand.';
+
+            }
+
+            else {
+
+              desc.innerHTML =
+                '<strong>Wilting Triage:</strong> Satisfies the highest-deficit zones first.';
+
+            }
+
+          }
+
+          this.recomputeAll();
 
         }
       );
 
 
-      log(
-        "Irrigation cycle complete. Reservoir and moisture states updated.",
-        "ACTION"
+    /* Logs */
+
+    document
+      .getElementById('btn-clear-logs')
+      ?.addEventListener(
+        'click',
+        () => {
+
+          if (
+            this.dom['terminal-logs-body']
+          ) {
+
+            this.dom[
+              'terminal-logs-body'
+            ].innerHTML = `
+
+              <div class="log-entry log-sys">
+
+                <span class="log-time">
+                  [${new Date().toLocaleTimeString()}]
+                </span>
+
+                <span class="log-msg">
+                  Logs cleared.
+                </span>
+
+              </div>
+
+            `;
+
+          }
+
+        }
       );
 
 
-      playTone(900);
+    /* -----------------------------------------------------
+       MANUAL WEATHER
+       ----------------------------------------------------- */
+
+    this.dom['slider-rain']
+      ?.addEventListener(
+        'input',
+        event => {
+
+          this.weather.rainForecastMm =
+            parseFloat(
+              event.target.value
+            ) || 0;
+
+          this.weather.source =
+            'manual';
+
+          this.weather.et0 =
+            this.estimateET0();
+
+          this.updateWeatherUI();
+
+          this.recomputeAll();
+
+        }
+      );
+
+
+    this.dom['slider-humidity']
+      ?.addEventListener(
+        'input',
+        event => {
+
+          this.weather.humidityPct =
+            parseFloat(
+              event.target.value
+            ) || 0;
+
+          this.weather.source =
+            'manual';
+
+          this.weather.et0 =
+            this.estimateET0();
+
+          this.updateWeatherUI();
+
+          this.recomputeAll();
+
+        }
+      );
+
+
+    this.dom['slider-temp']
+      ?.addEventListener(
+        'input',
+        event => {
+
+          this.weather.temperatureC =
+            parseFloat(
+              event.target.value
+            ) || 0;
+
+          this.weather.source =
+            'manual';
+
+          this.weather.et0 =
+            this.estimateET0();
+
+          this.updateWeatherUI();
+
+          this.recomputeAll();
+
+        }
+      );
+
+
+    this.dom['weather-preset-select']
+      ?.addEventListener(
+        'change',
+        event =>
+          this.applyWeatherPreset(
+            event.target.value
+          )
+      );
+
+
+    /* -----------------------------------------------------
+       LOCATION SEARCH
+       ----------------------------------------------------- */
+
+    this.dom['btn-location-search']
+      ?.addEventListener(
+        'click',
+        () => this.searchLocations()
+      );
+
+
+    this.dom['location-search']
+      ?.addEventListener(
+        'keydown',
+        event => {
+
+          if (event.key === 'Enter') {
+
+            this.searchLocations();
+
+          }
+
+        }
+      );
+
+
+    this.dom['btn-use-location']
+      ?.addEventListener(
+        'click',
+        () => this.useGPSLocation()
+      );
+  }
+
+
+  /* =======================================================
+     LOCATION SEARCH
+     ======================================================= */
+
+  async searchLocations() {
+
+    const query =
+      this.dom['location-search']
+        ?.value
+        .trim();
+
+
+    if (!query) return;
+
+
+    const box =
+      this.dom['location-results'];
+
+
+    if (box) {
+
+      box.classList.remove('hidden');
+
+      box.innerHTML =
+        '<div class="location-result">Searching…</div>';
+
+    }
+
+
+    try {
+
+      const url =
+        `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query)}&count=6&language=en&format=json`;
+
+
+      const response =
+        await fetch(url);
+
+
+      if (!response.ok) {
+
+        throw new Error(
+          'Geocoding request failed'
+        );
+
+      }
+
+
+      const data =
+        await response.json();
+
+
+      const results =
+        data.results || [];
+
+
+      if (!results.length) {
+
+        box.innerHTML =
+          '<div class="location-result">No locations found.</div>';
+
+        return;
+
+      }
+
+
+      box.innerHTML = '';
+
+
+      results.forEach(place => {
+
+        const button =
+          document.createElement('button');
+
+
+        button.type = 'button';
+
+        button.className =
+          'location-result';
+
+
+        button.textContent =
+          `${place.name}${
+            place.admin1
+              ? ', ' + place.admin1
+              : ''
+          }${
+            place.country
+              ? ', ' + place.country
+              : ''
+          }`;
+
+
+        button.addEventListener(
+          'click',
+          () => {
+
+            box.classList.add('hidden');
+
+
+            this.selectLocation({
+
+              name: place.name,
+
+              admin1: place.admin1,
+
+              country: place.country,
+
+              latitude: place.latitude,
+
+              longitude: place.longitude
+
+            });
+
+          }
+        );
+
+
+        box.appendChild(button);
+
+      });
+
+
+    }
+
+    catch (error) {
+
+      if (box) {
+
+        box.innerHTML =
+          '<div class="location-result">Location search failed. Check your internet connection.</div>';
+
+      }
+
+
+      this.logTelemetry(
+        'WARN',
+        'Location search failed.'
+      );
 
     }
 
   }
 
 
-  requestAnimationFrame(
-    animate
-  );
+  /* =======================================================
+     GPS
+     ======================================================= */
 
-}
+  useGPSLocation() {
 
+    if (!navigator.geolocation) {
 
-/* =========================================================
-   ADVANCE ONE DAY
-========================================================= */
-
-function advanceDay() {
-
-  state.regions.forEach(
-    region => {
-
-      /*
-        ET-driven moisture loss.
-
-        This is the simulated
-        daily soil state update.
-      */
-
-      const loss =
-        Math.min(
-          4,
-
-          Math.max(
-            0.4,
-
-            state.weather.et0 *
-            0.65 *
-            getKc(region)
-          )
-        );
-
-
-      if (
-        region.sensorOk
-      ) {
-
-        region.moisture =
-          Math.max(
-            0,
-            region.moisture -
-            loss
-          );
-
-
-        region.lastGood =
-          region.moisture;
-
-      } else {
-
-        /*
-          Sensor failure fallback:
-
-          last valid state
-          +
-          modeled ET loss
-        */
-
-        region.lastGood =
-          Math.max(
-            0,
-            region.lastGood -
-            loss
-          );
-
-
-        region.moisture =
-          region.lastGood;
-
-      }
-
-    }
-  );
-
-
-  log(
-    "One modeled day advanced: ET-driven soil moisture loss applied.",
-    "MODEL"
-  );
-
-
-  render();
-
-}
-
-
-/* =========================================================
-   RANDOMIZE
-========================================================= */
-
-function randomizeScenario() {
-
-  const soils =
-    Object.keys(
-      SOILS
-    );
-
-
-  const crops =
-    Object.keys(
-      CROPS
-    );
-
-
-  state.regions.forEach(
-    region => {
-
-      region.soil =
-        soils[
-          Math.floor(
-            Math.random() *
-            soils.length
-          )
-        ];
-
-
-      region.crop =
-        crops[
-          Math.floor(
-            Math.random() *
-            crops.length
-          )
-        ];
-
-
-      region.stage =
-        STAGES[
-          Math.floor(
-            Math.random() *
-            STAGES.length
-          )
-        ];
-
-
-      const soil =
-        SOILS[
-          region.soil
-        ];
-
-
-      region.moisture =
-        Math.round(
-          (
-            soil.wp +
-            Math.random() *
-            (
-              soil.thetaFC -
-              soil.wp
-            )
-          ) *
-          10
-        ) / 10;
-
-
-      region.lastGood =
-        region.moisture;
-
-
-      region.sensorOk =
-        Math.random() > 0.15;
-
-    });
-
-
-  state.reservoir =
-    [
-      3000000,
-      8000000,
-      15000000,
-      20000000
-    ][
-      Math.floor(
-        Math.random() * 4
-      )
-    ];
-
-
-  $("res-slider").value =
-    state.reservoir;
-
-
-  $("res-val").textContent =
-    `${fmt(
-      state.reservoir
-    )} L`;
-
-
-  renderZones();
-
-  render();
-
-
-  log(
-    "Random agronomic scenario generated.",
-    "SYSTEM"
-  );
-
-}
-
-
-/* =========================================================
-   EVENT LISTENERS
-========================================================= */
-
-
-/* Location */
-
-$("btn-search").onclick =
-  () => {
-
-    searchLocation(
-      $("location-input")
-        .value
-        .trim()
-    );
-
-  };
-
-
-$("location-input").onkeydown =
-  event => {
-
-    if (
-      event.key ===
-      "Enter"
-    ) {
-
-      $("btn-search").click();
-
-    }
-
-  };
-
-
-/* GPS */
-
-$("btn-location").onclick =
-  () => {
-
-    if (
-      !navigator.geolocation
-    ) {
-
-      alert(
-        "Browser geolocation is unavailable."
+      this.logTelemetry(
+        'WARN',
+        'Browser geolocation is unavailable.'
       );
 
       return;
@@ -2993,280 +1108,2872 @@ $("btn-location").onclick =
     }
 
 
-    navigator.geolocation
-      .getCurrentPosition(
-
-        position => {
-
-          state.location = {
-
-            name:
-              "Current GPS location",
-
-            lat:
-              position.coords.latitude,
-
-            lon:
-              position.coords.longitude
-
-          };
+    this.setWeatherSourceStatus(
+      'Locating…',
+      'loading'
+    );
 
 
-          fetchWeather();
+    navigator.geolocation.getCurrentPosition(
 
-        },
+      position => {
 
-        () => {
+        this.selectLocation({
 
-          alert(
-            "Location permission was not granted."
-          );
+          name: 'Current GPS location',
+
+          latitude:
+            position.coords.latitude,
+
+          longitude:
+            position.coords.longitude
+
+        });
+
+      },
+
+
+      () => {
+
+        this.setWeatherSourceStatus(
+          'GPS unavailable — manual',
+          'manual'
+        );
+
+
+        this.logTelemetry(
+          'WARN',
+          'GPS permission/location unavailable. Use location search.'
+        );
+
+      },
+
+
+      {
+        enableHighAccuracy: false,
+        timeout: 10000,
+        maximumAge: 300000
+      }
+
+    );
+
+  }
+
+
+  /* =======================================================
+     LIVE WEATHER
+     ======================================================= */
+
+  async selectLocation(location) {
+
+    this.weather.location =
+      location;
+
+
+    this.setWeatherSourceStatus(
+      'Loading live weather…',
+      'loading'
+    );
+
+
+    if (this.dom['selected-location']) {
+
+      this.dom[
+        'selected-location'
+      ].textContent =
+        `${location.name}${
+          location.admin1
+            ? ', ' + location.admin1
+            : ''
+        }${
+          location.country
+            ? ', ' + location.country
+            : ''
+        }`;
+
+    }
+
+
+    const requestId =
+      ++this.weatherRequestId;
+
+
+    try {
+
+      const params =
+        new URLSearchParams({
+
+          latitude:
+            location.latitude,
+
+          longitude:
+            location.longitude,
+
+          current:
+            'temperature_2m,relative_humidity_2m,precipitation,wind_speed_10m,shortwave_radiation',
+
+          daily:
+            'et0_fao_evapotranspiration,precipitation_sum',
+
+          timezone:
+            'auto',
+
+          forecast_days:
+            '2'
+
+        });
+
+
+      const response =
+        await fetch(
+          `https://api.open-meteo.com/v1/forecast?${params}`
+        );
+
+
+      if (!response.ok) {
+
+        throw new Error(
+          'Weather request failed'
+        );
+
+      }
+
+
+      const data =
+        await response.json();
+
+
+      if (
+        requestId !==
+        this.weatherRequestId
+      ) {
+
+        return;
+
+      }
+
+
+      const current =
+        data.current || {};
+
+
+      const daily =
+        data.daily || {};
+
+
+      /* ---------------------------------------------------
+         IMPORTANT:
+         USE CURRENT HUMIDITY FROM SELECTED LOCATION
+         --------------------------------------------------- */
+
+      const temperature =
+        Number(
+          current.temperature_2m
+        );
+
+
+      const humidity =
+        Number(
+          current.relative_humidity_2m
+        );
+
+
+      const currentRain =
+        Number(
+          current.precipitation
+        );
+
+
+      const dailyRain =
+        Number(
+          daily.precipitation_sum?.[0]
+        );
+
+
+      const et0 =
+        Number(
+          daily.et0_fao_evapotranspiration?.[0]
+        );
+
+
+      const wind =
+        Number(
+          current.wind_speed_10m
+        );
+
+
+      const solar =
+        Number(
+          current.shortwave_radiation
+        );
+
+
+      if (
+        Number.isFinite(temperature)
+      ) {
+
+        this.weather.temperatureC =
+          temperature;
+
+      }
+
+
+      if (
+        Number.isFinite(humidity)
+      ) {
+
+        this.weather.humidityPct =
+          humidity;
+
+      }
+
+
+      if (
+        Number.isFinite(wind)
+      ) {
+
+        this.weather.windSpeedKmh =
+          wind;
+
+      }
+
+
+      if (
+        Number.isFinite(solar)
+      ) {
+
+        this.weather.solarRadiation =
+          solar;
+
+      }
+
+
+      /*
+       * Daily precipitation is used because
+       * irrigation decision concerns forecast rainfall.
+       */
+
+      if (
+        Number.isFinite(dailyRain)
+      ) {
+
+        this.weather.rainForecastMm =
+          dailyRain;
+
+      }
+
+      else if (
+        Number.isFinite(currentRain)
+      ) {
+
+        this.weather.rainForecastMm =
+          currentRain;
+
+      }
+
+
+      if (
+        Number.isFinite(et0)
+      ) {
+
+        this.weather.et0 =
+          et0;
+
+      }
+
+      else {
+
+        this.weather.et0 =
+          this.estimateET0();
+
+      }
+
+
+      this.weather.source =
+        'open-meteo';
+
+
+      /*
+       * THIS IS THE IMPORTANT PART.
+       * Update sliders + labels AFTER location changes.
+       */
+
+      this.updateWeatherUI();
+
+
+      /*
+       * Demand is recalculated AFTER
+       * humidity, temperature, rain and ET₀
+       * have been updated.
+       */
+
+      this.recomputeAll();
+
+
+      this.logTelemetry(
+        'WEATHER',
+
+        `Live weather loaded for ${
+          location.name
+        }: ${
+          this.weather.temperatureC.toFixed(1)
+        }°C, ${
+          this.weather.humidityPct.toFixed(0)
+        }% RH, ${
+          this.weather.rainForecastMm.toFixed(1)
+        }mm rain, ET₀ ${
+          this.weather.et0.toFixed(2)
+        }mm/day.`
+      );
+
+
+      this.setWeatherSourceStatus(
+        '● Live Open-Meteo',
+        'live'
+      );
+
+    }
+
+
+    catch (error) {
+
+      this.weather.source =
+        'manual';
+
+
+      this.weather.et0 =
+        this.estimateET0();
+
+
+      this.updateWeatherUI();
+
+      this.recomputeAll();
+
+
+      this.setWeatherSourceStatus(
+        '● API failed — manual',
+        'manual'
+      );
+
+
+      this.logTelemetry(
+        'WARN',
+        `Weather API failed for ${location.name}; using fallback weather model.`
+      );
+
+    }
+
+  }
+
+
+  /* =======================================================
+     FALLBACK ET₀
+     ======================================================= */
+
+  estimateET0() {
+
+    const temperature =
+      this.weather.temperatureC;
+
+    const humidity =
+      this.weather.humidityPct;
+
+    const wind =
+      this.weather.windSpeedKmh;
+
+
+    const dryAirFactor =
+      Math.max(
+        0.2,
+        1 - humidity / 100
+      );
+
+
+    return Math.max(
+
+      0.8,
+
+      Math.min(
+
+        9,
+
+        0.9 +
+
+        0.16 *
+        Math.max(
+          0,
+          temperature - 10
+        ) +
+
+        0.015 *
+        wind +
+
+        1.8 *
+        dryAirFactor
+
+      )
+
+    );
+
+  }
+
+
+  /* =======================================================
+     WEATHER STATUS
+     ======================================================= */
+
+  setWeatherSourceStatus(
+    text,
+    mode
+  ) {
+
+    if (
+      !this.dom['weather-source-status']
+    ) return;
+
+
+    this.dom[
+      'weather-source-status'
+    ].textContent = text;
+
+
+    this.dom[
+      'weather-source-status'
+    ].className =
+      `weather-source-${mode}`;
+
+  }
+
+
+  /* =======================================================
+     WEATHER UI
+     ======================================================= */
+
+  updateWeatherUI() {
+
+    const rain =
+      Math.max(
+        0,
+        Math.min(
+          35,
+          Number(this.weather.rainForecastMm) || 0
+        )
+      );
+
+
+    const humidity =
+      Math.max(
+        15,
+        Math.min(
+          100,
+          Number(this.weather.humidityPct) || 0
+        )
+      );
+
+
+    const temperature =
+      Math.max(
+        10,
+        Math.min(
+          45,
+          Number(this.weather.temperatureC) || 0
+        )
+      );
+
+
+    this.weather.rainForecastMm =
+      rain;
+
+    this.weather.humidityPct =
+      humidity;
+
+    this.weather.temperatureC =
+      temperature;
+
+
+    /* Slider values */
+
+    if (
+      this.dom['slider-rain']
+    ) {
+
+      this.dom[
+        'slider-rain'
+      ].value = rain;
+
+    }
+
+
+    if (
+      this.dom['slider-humidity']
+    ) {
+
+      this.dom[
+        'slider-humidity'
+      ].value = humidity;
+
+    }
+
+
+    if (
+      this.dom['slider-temp']
+    ) {
+
+      this.dom[
+        'slider-temp'
+      ].value = temperature;
+
+    }
+
+
+    /* Visible values */
+
+    if (
+      this.dom['val-rain-mm']
+    ) {
+
+      this.dom[
+        'val-rain-mm'
+      ].textContent =
+        `${rain.toFixed(1)} mm`;
+
+    }
+
+
+    if (
+      this.dom['val-humidity']
+    ) {
+
+      this.dom[
+        'val-humidity'
+      ].textContent =
+        `${humidity.toFixed(0)}%`;
+
+    }
+
+
+    if (
+      this.dom['val-temperature']
+    ) {
+
+      this.dom[
+        'val-temperature'
+      ].textContent =
+        `${temperature.toFixed(1)} °C`;
+
+    }
+
+
+    if (
+      this.dom['live-et0']
+    ) {
+
+      this.dom[
+        'live-et0'
+      ].textContent =
+        `${this.weather.et0.toFixed(2)} mm/day`;
+
+    }
+
+
+    if (
+      this.dom['weather-preset-select'] &&
+      this.weather.source === 'open-meteo'
+    ) {
+
+      this.dom[
+        'weather-preset-select'
+      ].value = 'custom';
+
+    }
+
+  }
+
+
+  /* =======================================================
+     WEATHER PRESETS
+     ======================================================= */
+
+  applyWeatherPreset(key) {
+
+    if (
+      key === 'sunny_dry'
+    ) {
+
+      this.weather.rainForecastMm = 0;
+      this.weather.humidityPct = 26;
+      this.weather.temperatureC = 34;
+
+    }
+
+    else if (
+      key === 'mild_opt'
+    ) {
+
+      this.weather.rainForecastMm = 0;
+      this.weather.humidityPct = 52;
+      this.weather.temperatureC = 23;
+
+    }
+
+    else if (
+      key === 'storm_incoming'
+    ) {
+
+      this.weather.rainForecastMm = 18;
+      this.weather.humidityPct = 91;
+      this.weather.temperatureC = 20;
+
+    }
+
+    else if (
+      key === 'humid_fog'
+    ) {
+
+      this.weather.rainForecastMm = 1;
+      this.weather.humidityPct = 88;
+      this.weather.temperatureC = 19;
+
+    }
+
+    else if (
+      key === 'light_drizzle'
+    ) {
+
+      this.weather.rainForecastMm = 4;
+      this.weather.humidityPct = 82;
+      this.weather.temperatureC = 21;
+
+    }
+
+    else {
+
+      return;
+
+    }
+
+
+    this.weather.source =
+      'manual';
+
+
+    this.weather.et0 =
+      this.estimateET0();
+
+
+    this.setWeatherSourceStatus(
+      '● Manual preset',
+      'manual'
+    );
+
+
+    this.updateWeatherUI();
+
+    this.recomputeAll();
+
+  }
+
+
+  /* =======================================================
+     QUADRANTS
+     ======================================================= */
+
+  renderQuadrantsOnce() {
+
+    const container =
+      document.getElementById(
+        'quadrants-container'
+      );
+
+
+    if (!container) return;
+
+
+    container.innerHTML = '';
+
+
+    const fragment =
+      document.createDocumentFragment();
+
+
+    this.regions.forEach(region => {
+
+      const card =
+        document.createElement('div');
+
+
+      card.className =
+        'quadrant-card';
+
+
+      card.id =
+        `quadrant-card-${region.id}`;
+
+
+      card.innerHTML = `
+
+        <div class="sprinkler-overlay"
+             id="sprinkler-${region.id}">
+
+          <div class="water-droplets"></div>
+
+        </div>
+
+
+        <div class="quadrant-top">
+
+          <div class="quadrant-id-group">
+
+            <div class="quadrant-letter">
+              ${region.letter}
+            </div>
+
+            <div class="quadrant-title-info">
+
+              <span class="quadrant-name">
+                ${region.name}
+                (${region.quadrant})
+              </span>
+
+              <span class="quadrant-area-tag">
+                AREA: 25 HA (EQUAL 25%)
+              </span>
+
+            </div>
+
+          </div>
+
+
+          <span class="crop-badge">
+            ${region.crop}
+          </span>
+
+        </div>
+
+
+        <div class="soil-config-row">
+
+          <div class="form-group">
+
+            <label class="form-label">
+              Soil Type
+            </label>
+
+            <select
+              id="soil-select-${region.id}"
+              class="form-select select-sm soil-picker"
+              data-id="${region.id}"
+            >
+
+              <option
+                value="clay"
+                ${region.soilType === 'clay' ? 'selected' : ''}
+              >
+                Clay (~36%)
+              </option>
+
+              <option
+                value="sandy"
+                ${region.soilType === 'sandy' ? 'selected' : ''}
+              >
+                Sandy (~18%)
+              </option>
+
+              <option
+                value="loamy"
+                ${region.soilType === 'loamy' ? 'selected' : ''}
+              >
+                Loamy (~28%)
+              </option>
+
+              <option
+                value="silt_loam"
+                ${region.soilType === 'silt_loam' ? 'selected' : ''}
+              >
+                Silt Loam (~32%)
+              </option>
+
+              <option
+                value="peaty"
+                ${region.soilType === 'peaty' ? 'selected' : ''}
+              >
+                Peaty (~42%)
+              </option>
+
+            </select>
+
+          </div>
+
+
+          <div class="form-group">
+
+            <label class="form-label">
+
+              Target
+
+              <span
+                class="text-cyan font-mono"
+                id="target-label-${region.id}"
+              >
+                ${region.targetMoisture}%
+              </span>
+
+            </label>
+
+
+            <input
+              type="number"
+              id="target-input-${region.id}"
+              min="5"
+              max="55"
+              step="1"
+              value="${region.targetMoisture}"
+              class="form-input select-sm target-num-input"
+              data-id="${region.id}"
+            >
+
+          </div>
+
+        </div>
+
+
+        <div class="k-pill">
+
+          <span class="k-pill-title">
+            K (L/1% ΔM):
+          </span>
+
+          <div
+            style="
+              display:flex;
+              align-items:center;
+              gap:6px
+            "
+          >
+
+            <span
+              class="k-pill-val"
+              id="k-val-${region.id}"
+            >
+              ${region.kFactor} L/%
+            </span>
+
+            <button
+              class="btn btn-xs btn-outline btn-reroll-single"
+              data-id="${region.id}"
+            >
+              ↺
+            </button>
+
+          </div>
+
+        </div>
+
+
+        <div class="moisture-block">
+
+          <div class="moisture-header-row">
+
+            <span class="control-label">
+              Moisture
+            </span>
+
+            <div class="moisture-readouts">
+
+              <span>
+                Cur:
+
+                <strong
+                  class="val-current"
+                  id="cur-val-${region.id}"
+                >
+                  ${region.currentMoisture}%
+                </strong>
+
+              </span>
+
+              <span>
+
+                Tgt:
+
+                <span
+                  class="val-target"
+                  id="tgt-disp-${region.id}"
+                >
+                  ${region.targetMoisture}%
+                </span>
+
+              </span>
+
+            </div>
+
+          </div>
+
+
+          <div class="moisture-meter-container">
+
+            <div
+              class="moisture-bar-current"
+              id="bar-cur-${region.id}"
+            ></div>
+
+            <div
+              class="moisture-target-indicator"
+              id="ind-tgt-${region.id}"
+            ></div>
+
+          </div>
+
+
+          <input
+            type="range"
+            min="0"
+            max="55"
+            step="0.5"
+            value="${region.currentMoisture}"
+            class="moisture-slider-input"
+            data-id="${region.id}"
+            id="slider-cur-${region.id}"
+          >
+
+        </div>
+
+
+        <div class="quadrant-bottom">
+
+          <div class="stat-item">
+
+            <span class="stat-title">
+              Deficit:
+            </span>
+
+            <span
+              class="stat-val-deficit"
+              id="deficit-val-${region.id}"
+            >
+              0.0%
+            </span>
+
+          </div>
+
+
+          <div class="stat-item">
+
+            <span class="stat-title">
+              Required:
+            </span>
+
+            <span
+              class="stat-val-water"
+              id="water-req-${region.id}"
+            >
+              0 L
+            </span>
+
+          </div>
+
+        </div>
+
+      `;
+
+
+      fragment.appendChild(card);
+
+    });
+
+
+    container.appendChild(fragment);
+
+
+    this.regions.forEach(region => {
+
+      this.dom[
+        `card_${region.id}`
+      ] =
+        document.getElementById(
+          `quadrant-card-${region.id}`
+        );
+
+
+      this.dom[
+        `curVal_${region.id}`
+      ] =
+        document.getElementById(
+          `cur-val-${region.id}`
+        );
+
+
+      this.dom[
+        `tgtDisp_${region.id}`
+      ] =
+        document.getElementById(
+          `tgt-disp-${region.id}`
+        );
+
+
+      this.dom[
+        `tgtLabel_${region.id}`
+      ] =
+        document.getElementById(
+          `target-label-${region.id}`
+        );
+
+
+      this.dom[
+        `tgtInput_${region.id}`
+      ] =
+        document.getElementById(
+          `target-input-${region.id}`
+        );
+
+
+      this.dom[
+        `kVal_${region.id}`
+      ] =
+        document.getElementById(
+          `k-val-${region.id}`
+        );
+
+
+      this.dom[
+        `barCur_${region.id}`
+      ] =
+        document.getElementById(
+          `bar-cur-${region.id}`
+        );
+
+
+      this.dom[
+        `indTgt_${region.id}`
+      ] =
+        document.getElementById(
+          `ind-tgt-${region.id}`
+        );
+
+
+      this.dom[
+        `deficitVal_${region.id}`
+      ] =
+        document.getElementById(
+          `deficit-val-${region.id}`
+        );
+
+
+      this.dom[
+        `waterReq_${region.id}`
+      ] =
+        document.getElementById(
+          `water-req-${region.id}`
+        );
+
+
+      this.dom[
+        `sliderCur_${region.id}`
+      ] =
+        document.getElementById(
+          `slider-cur-${region.id}`
+        );
+
+    });
+
+
+    this.bindQuadrantInputs();
+
+  }
+
+
+  bindQuadrantInputs() {
+
+    document
+      .querySelectorAll('.soil-picker')
+      .forEach(select => {
+
+        select.addEventListener(
+          'change',
+          event => {
+
+            const id =
+              parseInt(
+                event.target.dataset.id,
+                10
+              );
+
+
+            const region =
+              this.regions.find(
+                r => r.id === id
+              );
+
+
+            const profile =
+              SOIL_PROFILES[
+                event.target.value
+              ];
+
+
+            region.soilType =
+              event.target.value;
+
+
+            region.targetMoisture =
+              profile.defaultTarget;
+
+
+            region.kFactor =
+              this.generateRandomK(
+                region.soilType
+              );
+
+
+            this.dom[
+              `tgtInput_${id}`
+            ].value =
+              region.targetMoisture;
+
+
+            this.dom[
+              `tgtLabel_${id}`
+            ].textContent =
+              `${region.targetMoisture}%`;
+
+
+            this.dom[
+              `tgtDisp_${id}`
+            ].textContent =
+              `${region.targetMoisture}%`;
+
+
+            this.dom[
+              `kVal_${id}`
+            ].textContent =
+              `${region.kFactor} L/%`;
+
+
+            this.recomputeAll();
+
+          }
+        );
+
+      });
+
+
+    document
+      .querySelectorAll('.target-num-input')
+      .forEach(input => {
+
+        input.addEventListener(
+          'input',
+          event => {
+
+            const id =
+              parseInt(
+                event.target.dataset.id,
+                10
+              );
+
+
+            const region =
+              this.regions.find(
+                r => r.id === id
+              );
+
+
+            const value =
+              Math.max(
+                0,
+                Math.min(
+                  55,
+                  parseFloat(
+                    event.target.value
+                  ) || 0
+                )
+              );
+
+
+            region.targetMoisture =
+              value;
+
+
+            this.dom[
+              `tgtLabel_${id}`
+            ].textContent =
+              `${value}%`;
+
+
+            this.dom[
+              `tgtDisp_${id}`
+            ].textContent =
+              `${value}%`;
+
+
+            this.recomputeAll();
+
+          }
+        );
+
+      });
+
+
+    document
+      .querySelectorAll('.moisture-slider-input')
+      .forEach(slider => {
+
+        slider.addEventListener(
+          'input',
+          event => {
+
+            const id =
+              parseInt(
+                event.target.dataset.id,
+                10
+              );
+
+
+            const region =
+              this.regions.find(
+                r => r.id === id
+              );
+
+
+            region.currentMoisture =
+              parseFloat(
+                event.target.value
+              ) || 0;
+
+
+            this.dom[
+              `curVal_${id}`
+            ].textContent =
+              `${region.currentMoisture.toFixed(1)}%`;
+
+
+            this.recomputeAll();
+
+          }
+        );
+
+      });
+
+
+    document
+      .querySelectorAll('.btn-reroll-single')
+      .forEach(button => {
+
+        button.addEventListener(
+          'click',
+          event => {
+
+            event.stopPropagation();
+
+
+            const id =
+              parseInt(
+                event.currentTarget.dataset.id,
+                10
+              );
+
+
+            const region =
+              this.regions.find(
+                r => r.id === id
+              );
+
+
+            region.kFactor =
+              this.generateRandomK(
+                region.soilType
+              );
+
+
+            this.dom[
+              `kVal_${id}`
+            ].textContent =
+              `${region.kFactor} L/%`;
+
+
+            this.recomputeAll();
+
+          }
+        );
+
+      });
+
+  }
+
+
+  /* =======================================================
+     AGRONOMIC CALCULATIONS
+     ======================================================= */
+
+  getCropKc(region) {
+
+    const crop =
+      CROP_KC[region.crop] ||
+      CROP_KC['Soybeans'];
+
+
+    return crop.mid;
+
+  }
+
+
+  getSoilStress(region) {
+
+    const profile =
+      SOIL_PROFILES[
+        region.soilType
+      ];
+
+
+    const availableRange =
+      Math.max(
+        1,
+        region.targetMoisture -
+        profile.wiltingPoint
+      );
+
+
+    const relative =
+      Math.max(
+        0,
+        Math.min(
+          1,
+          (
+            region.currentMoisture -
+            profile.wiltingPoint
+          ) /
+          availableRange
+        )
+      );
+
+
+    /*
+     * Demo root-zone stress factor.
+     *
+     * Never lets the value become zero,
+     * because plants still have atmospheric demand.
+     */
+
+    return Math.max(
+      0.25,
+      Math.min(
+        1,
+        relative
+      )
+    );
+
+  }
+
+
+  calculateZoneDemand(region) {
+
+    const et0 =
+      Math.max(
+        0.1,
+        this.weather.et0 ||
+        this.estimateET0()
+      );
+
+
+    const kc =
+      this.getCropKc(region);
+
+
+    const ks =
+      this.getSoilStress(region);
+
+
+    /*
+     * Crop evapotranspiration:
+     *
+     * ETc = ET₀ × Kc × Ks
+     */
+
+    const etc =
+      et0 *
+      kc *
+      ks;
+
+
+    region.kc = kc;
+
+    region.ks = ks;
+
+    region.etc = etc;
+
+
+    /*
+     * Convert atmospheric demand into
+     * a calibrated zone-demand multiplier.
+     *
+     * This keeps the existing K-factor useful.
+     */
+
+    const etFactor =
+      Math.max(
+        0.55,
+        Math.min(
+          1.65,
+          etc / 4.5
+        )
+      );
+
+
+    /*
+     * Rain credit:
+     *
+     * More rain forecast =
+     * less irrigation demand.
+     */
+
+    const rainCredit =
+      Math.max(
+        0.35,
+        1 -
+        Math.min(
+          0.65,
+          this.weather.rainForecastMm / 20
+        )
+      );
+
+
+    /*
+     * Humidity factor:
+     *
+     * High humidity lowers atmospheric demand.
+     * Low humidity increases it.
+     */
+
+    const humidityFactor =
+      Math.max(
+        0.85,
+        Math.min(
+          1.10,
+          1 +
+          (
+            50 -
+            this.weather.humidityPct
+          ) / 500
+        )
+      );
+
+
+    const weatherFactor =
+      Math.max(
+        0.40,
+        Math.min(
+          1.70,
+          etFactor *
+          rainCredit *
+          humidityFactor
+        )
+      );
+
+
+    region.weatherFactor =
+      weatherFactor;
+
+
+    /*
+     * BASE WATER DEMAND
+     *
+     * Deficit × K
+     */
+
+    const baseDemand =
+      region.deficit *
+      region.kFactor;
+
+
+    /*
+     * FINAL DYNAMIC DEMAND
+     *
+     * Base × Weather Factor
+     */
+
+    region.waterRequired =
+      Math.round(
+        baseDemand *
+        weatherFactor
+      );
+
+
+    return region.waterRequired;
+
+  }
+
+
+  /* =======================================================
+     MASTER RECALCULATION
+     ======================================================= */
+
+  recomputeAll() {
+
+    let totalDemand = 0;
+
+    let totalDeficit = 0;
+
+    let totalEtc = 0;
+
+
+    for (
+      const region of this.regions
+    ) {
+
+      region.deficit =
+        Math.max(
+          0,
+          Math.round(
+            (
+              region.targetMoisture -
+              region.currentMoisture
+            ) * 10
+          ) / 10
+        );
+
+
+      totalDeficit +=
+        region.deficit;
+
+
+      totalDemand +=
+        this.calculateZoneDemand(
+          region
+        );
+
+
+      totalEtc +=
+        region.etc || 0;
+
+    }
+
+
+    if (
+      !Number.isFinite(
+        this.weather.et0
+      )
+    ) {
+
+      this.weather.et0 =
+        this.estimateET0();
+
+    }
+
+
+    const avgEtc =
+      totalEtc /
+      this.regions.length;
+
+
+    const avgFactor =
+      this.regions.reduce(
+        (sum, region) =>
+          sum +
+          (
+            region.weatherFactor ||
+            1
+          ),
+        0
+      ) /
+      this.regions.length;
+
+
+    if (
+      this.dom['live-et0']
+    ) {
+
+      this.dom[
+        'live-et0'
+      ].textContent =
+        `${this.weather.et0.toFixed(2)} mm/day`;
+
+    }
+
+
+    if (
+      this.dom['live-etc']
+    ) {
+
+      this.dom[
+        'live-etc'
+      ].textContent =
+        `${avgEtc.toFixed(2)} mm/day`;
+
+    }
+
+
+    if (
+      this.dom['live-weather-factor']
+    ) {
+
+      this.dom[
+        'live-weather-factor'
+      ].textContent =
+        `${avgFactor.toFixed(2)}×`;
+
+    }
+
+
+    /*
+     * IMPORTANT:
+     *
+     * Demand is already recalculated
+     * before weather evaluation.
+     */
+
+    this.evaluateWeather(
+      totalDemand
+    );
+
+
+    this.optimizeAllocation(
+      totalDemand
+    );
+
+
+    this.renderFastDOM(
+      totalDemand,
+      (
+        totalDeficit / 4
+      ).toFixed(1)
+    );
+
+  }
+
+
+  /* =======================================================
+     WEATHER GATING
+     ======================================================= */
+
+  evaluateWeather(totalDemand) {
+
+    const rain =
+      this.weather.rainForecastMm;
+
+    const humidity =
+      this.weather.humidityPct;
+
+
+    if (
+      totalDemand === 0
+    ) {
+
+      this.dispatchStatus = {
+
+        type: 'STANDBY',
+
+        title:
+          'STANDBY // OPTIMAL MOISTURE',
+
+        reason:
+          'Field moisture is at capacity.',
+
+        waterSaved: 0
+
+      };
+
+    }
+
+
+    else if (
+      rain >= 5
+    ) {
+
+      this.dispatchStatus = {
+
+        type: 'DELAYED',
+
+        title:
+          'IRRIGATION DELAYED // RAIN PREDICTED',
+
+        reason:
+          `Forecast indicates ${rain.toFixed(
+            1
+          )}mm precipitation. Preserving reservoir water.`,
+
+        waterSaved:
+          totalDemand
+
+      };
+
+    }
+
+
+    else if (
+      humidity >= 80 &&
+      rain >= 2
+    ) {
+
+      this.dispatchStatus = {
+
+        type: 'DELAYED',
+
+        title:
+          'IRRIGATION DELAYED // HUMID + DRIZZLE',
+
+        reason:
+          `High humidity (${humidity.toFixed(
+            0
+          )}%) and rainfall reduce atmospheric demand.`,
+
+        waterSaved:
+          totalDemand
+
+      };
+
+    }
+
+
+    else {
+
+      this.dispatchStatus = {
+
+        type: 'INSTANT',
+
+        title:
+          'INSTANT IRRIGATION AUTHORIZED',
+
+        reason:
+          `Weather demand active: ET₀ ${
+            this.weather.et0.toFixed(2)
+          }mm/day, ${
+            humidity.toFixed(0)
+          }% RH, ${
+            rain.toFixed(1)
+          }mm rain.`,
+
+        waterSaved: 0
+
+      };
+
+    }
+
+  }
+
+
+  /* =======================================================
+     RESERVOIR OPTIMIZATION
+     ======================================================= */
+
+  optimizeAllocation(totalDemand) {
+
+    const available =
+      this.reservoir.waterAvailable;
+
+
+    if (
+      available >= totalDemand ||
+      totalDemand === 0
+    ) {
+
+      this.regions.forEach(
+        region => {
+
+          region.waterAllocated =
+            region.waterRequired;
 
         }
-
       );
 
-  };
+      return;
+
+    }
 
 
-/* Manual weather */
+    if (
+      this.optimizationStrategy ===
+      'proportional'
+    ) {
 
-$("rain-slider").oninput =
-  event => {
+      const scale =
+        available /
+        totalDemand;
 
-    state.weather.rain =
-      Number(
-        event.target.value
+
+      this.regions.forEach(
+        region => {
+
+          region.waterAllocated =
+            Math.floor(
+              region.waterRequired *
+              scale
+            );
+
+        }
       );
 
+      return;
 
-    state.weather.live =
-      false;
-
-
-    $("rain-val").textContent =
-      `${f1(
-        state.weather.rain
-      )} mm`;
+    }
 
 
-    render();
+    if (
+      this.optimizationStrategy ===
+      'triage_critical'
+    ) {
 
-  };
-
-
-$("rh-slider").oninput =
-  event => {
-
-    state.weather.humidity =
-      Number(
-        event.target.value
-      );
-
-
-    state.weather.live =
-      false;
+      const sorted =
+        [...this.regions].sort(
+          (a, b) =>
+            b.deficit -
+            a.deficit
+        );
 
 
-    $("rh-val").textContent =
-      `${f1(
-        state.weather.humidity
-      )}%`;
+      let pool =
+        available;
 
 
-    render();
+      this.regions.forEach(
+        region => {
 
-  };
+          region.waterAllocated =
+            0;
 
-
-$("temp-slider").oninput =
-  event => {
-
-    state.weather.temperature =
-      Number(
-        event.target.value
+        }
       );
 
 
-    state.weather.live =
-      false;
+      sorted.forEach(
+        selected => {
 
-
-    $("temp-val").textContent =
-      `${f1(
-        state.weather.temperature
-      )}°C`;
-
-
-    render();
-
-  };
-
-
-/* Reservoir */
-
-$("res-slider").oninput =
-  event => {
-
-    state.reservoir =
-      Number(
-        event.target.value
-      );
-
-
-    $("res-val").textContent =
-      `${fmt(
-        state.reservoir
-      )} L`;
-
-
-    render();
-
-  };
-
-
-document
-  .querySelectorAll(
-    ".chips button"
-  )
-  .forEach(
-    button => {
-
-      button.onclick =
-        () => {
-
-          state.reservoir =
-            Number(
-              button.dataset.res
+          const region =
+            this.regions.find(
+              r =>
+                r.id ===
+                selected.id
             );
 
 
-          $("res-slider")
-            .value =
-            state.reservoir;
+          const take =
+            Math.min(
+              pool,
+              region.waterRequired
+            );
 
 
-          $("res-val")
-            .textContent =
-            `${fmt(
-              state.reservoir
-            )} L`;
+          region.waterAllocated =
+            take;
 
 
-          render();
+          pool -= take;
 
-        };
+        }
+      );
+
+
+      return;
 
     }
-  );
 
 
-/* Optimization */
+    /*
+     * Smart vulnerability
+     */
 
-$("strategy").onchange =
-  event => {
+    let totalWeight = 0;
 
-    state.strategy =
-      event.target.value;
-
-    render();
-
-  };
+    const weights = [];
 
 
-/* Buttons */
-
-$("btn-run").onclick =
-  runIrrigationCycle;
-
-
-$("btn-evap").onclick =
-  advanceDay;
-
-
-$("btn-randomize").onclick =
-  randomizeScenario;
-
-
-/* Sensor failure */
-
-$("btn-fail-all").onclick =
-  () => {
-
-    state.allSensorsFailed =
-      !state.allSensorsFailed;
-
-
-    state.regions.forEach(
+    this.regions.forEach(
       region => {
 
-        region.sensorOk =
-          !state.allSensorsFailed;
+        const weight =
+          region.deficit *
+          SOIL_PROFILES[
+            region.soilType
+          ].droughtVulnerability;
+
+
+        weights.push(weight);
+
+        totalWeight +=
+          weight;
 
       }
     );
 
 
-    renderZones();
+    this.regions.forEach(
+      (region, index) => {
 
-    render();
+        region.waterAllocated =
+          totalWeight
 
+            ? Math.min(
+                region.waterRequired,
 
-    log(
-      state.allSensorsFailed
-        ? "All sensor failures injected. Fallback model active."
-        : "All sensors restored.",
-      "SENSOR"
+                Math.floor(
+                  (
+                    weights[index] /
+                    totalWeight
+                  ) *
+                  available
+                )
+              )
+
+            : 0;
+
+      }
     );
 
-  };
+  }
 
 
-/* Sound */
+  /* =======================================================
+     RENDER
+     ======================================================= */
 
-$("btn-sound-toggle").onclick =
-  () => {
+  renderFastDOM(
+    totalDemand,
+    avgDeficit
+  ) {
 
-    state.sound =
-      !state.sound;
-
-
-    $("btn-sound-toggle")
-      .textContent =
-      state.sound
-        ? "🔊"
-        : "🔇";
-
-  };
+    this.dom[
+      'kpi-total-demand'
+    ].textContent =
+      totalDemand.toLocaleString();
 
 
-/* Clear logs */
+    this.dom[
+      'kpi-avg-deficit'
+    ].textContent =
+      `Avg Deficit: ${avgDeficit}%`;
 
-$("btn-clear").onclick =
-  () => {
 
-    $("logs").innerHTML =
-      "";
+    const available =
+      this.reservoir.waterAvailable;
 
-  };
+
+    const coverage =
+      totalDemand > 0
+
+        ? Math.min(
+            100,
+            Math.round(
+              (
+                available /
+                totalDemand
+              ) * 100
+            )
+          )
+
+        : 100;
+
+
+    this.dom[
+      'kpi-water-reserved'
+    ].textContent =
+      available.toLocaleString();
+
+
+    this.dom[
+      'kpi-reserve-ratio'
+    ].textContent =
+      `Coverage: ${coverage}%`;
+
+
+    this.dom[
+      'kpi-dispatch-badge'
+    ].textContent =
+      this.dispatchStatus.type;
+
+
+    this.dom[
+      'kpi-dispatch-badge'
+    ].className =
+      `badge-status badge-${
+        this.dispatchStatus.type.toLowerCase()
+      }`;
+
+
+    this.dom[
+      'kpi-dispatch-reason'
+    ].textContent =
+      this.dispatchStatus.type ===
+      'INSTANT'
+
+        ? 'Weather window active'
+
+        : 'Weather gate active';
+
+
+    this.dom[
+      'aerial-total-water'
+    ].textContent =
+      `${totalDemand.toLocaleString()} L`;
+
+
+    this.dom[
+      'aerial-fulfillment-pct'
+    ].textContent =
+      `${coverage}%`;
+
+
+    /* Zones */
+
+    this.regions.forEach(
+      region => {
+
+        const ratio =
+          Math.min(
+            1,
+            region.currentMoisture /
+            55
+          );
+
+
+        const target =
+          Math.min(
+            1,
+            region.targetMoisture /
+            55
+          );
+
+
+        this.dom[
+          `barCur_${region.id}`
+        ].style.transform =
+          `scaleX(${ratio})`;
+
+
+        this.dom[
+          `indTgt_${region.id}`
+        ].style.left =
+          `${target * 100}%`;
+
+
+        this.dom[
+          `deficitVal_${region.id}`
+        ].textContent =
+          `${region.deficit.toFixed(1)}%`;
+
+
+        this.dom[
+          `waterReq_${region.id}`
+        ].textContent =
+          `${region.waterRequired.toLocaleString()} L`;
+
+
+        this.dom[
+          `card_${region.id}`
+        ].classList.toggle(
+          'stressed',
+          region.deficit >= 12
+        );
+
+      }
+    );
+
+
+    /* Weather decision */
+
+    this.dom[
+      'decision-title'
+    ].textContent =
+      this.dispatchStatus.title;
+
+
+    this.dom[
+      'decision-desc'
+    ].textContent =
+      this.dispatchStatus.reason;
+
+
+    this.dom[
+      'decision-badge'
+    ].textContent =
+      this.dispatchStatus.type;
+
+
+    this.dom[
+      'decision-badge'
+    ].className =
+      `badge-status badge-${
+        this.dispatchStatus.type.toLowerCase()
+      }`;
+
+
+    this.dom[
+      'weather-decision-card'
+    ].className =
+      `weather-decision-banner ${
+        this.dispatchStatus.type ===
+        'DELAYED'
+          ? 'delayed-active'
+          : ''
+      }`;
+
+
+    this.dom[
+      'dec-rain-gate'
+    ].textContent =
+      `${this.weather.rainForecastMm.toFixed(1)} mm`;
+
+
+    this.dom[
+      'dec-humid-gate'
+    ].textContent =
+      `${this.weather.humidityPct.toFixed(0)}% RH`;
+
+
+    this.dom[
+      'dec-savings'
+    ].textContent =
+      `${this.dispatchStatus.waterSaved.toLocaleString()} L`;
+
+
+    /* Reservoir */
+
+    const tankRatio =
+      Math.min(
+        1,
+        available /
+        this.reservoir.maxCapacity
+      );
+
+
+    const demandRatio =
+      Math.min(
+        1,
+        totalDemand /
+        this.reservoir.maxCapacity
+      );
+
+
+    this.dom[
+      'tank-fill-bar'
+    ].style.transform =
+      `scaleX(${tankRatio})`;
+
+
+    this.dom[
+      'tank-demand-marker'
+    ].style.left =
+      `${demandRatio * 100}%`;
+
+
+    if (
+      available >= totalDemand
+    ) {
+
+      this.dom[
+        'shortage-status-badge'
+      ].textContent =
+        `SURPLUS (+${
+          (
+            available -
+            totalDemand
+          ).toLocaleString()
+        } L)`;
+
+
+      this.dom[
+        'shortage-status-badge'
+      ].className =
+        'badge-status badge-balanced';
+
+    }
+
+    else {
+
+      this.dom[
+        'shortage-status-badge'
+      ].textContent =
+        `SHORTAGE (-${
+          (
+            totalDemand -
+            available
+          ).toLocaleString()
+        } L)`;
+
+
+      this.dom[
+        'shortage-status-badge'
+      ].className =
+        'badge-status badge-deficit';
+
+    }
+
+
+    /* Allocation table */
+
+    let allocatedTotal = 0;
+
+    let html = '';
+
+
+    this.regions.forEach(
+      region => {
+
+        allocatedTotal +=
+          region.waterAllocated;
+
+
+        const percentage =
+          region.waterRequired
+
+            ? Math.round(
+                (
+                  region.waterAllocated /
+                  region.waterRequired
+                ) * 100
+              )
+
+            : 100;
+
+
+        html += `
+
+          <tr>
+
+            <td>
+              <strong>
+                ${region.letter}
+              </strong>
+              -
+              ${region.name}
+            </td>
+
+            <td>
+              ${
+                SOIL_PROFILES[
+                  region.soilType
+                ].name
+              }
+            </td>
+
+            <td>
+              ${region.deficit.toFixed(1)}%
+            </td>
+
+            <td>
+              ${region.waterRequired.toLocaleString()} L
+            </td>
+
+            <td>
+              <strong>
+                ${region.waterAllocated.toLocaleString()} L
+              </strong>
+            </td>
+
+            <td>
+
+              <div class="opt-prog-wrap">
+
+                <div class="opt-prog-bar">
+
+                  <div
+                    class="opt-prog-fill ${
+                      percentage < 100
+                        ? 'short'
+                        : ''
+                    }"
+                    style="
+                      transform:
+                        scaleX(
+                          ${percentage / 100}
+                        )
+                    "
+                  ></div>
+
+                </div>
+
+                <span class="opt-prog-pct">
+                  ${percentage}%
+                </span>
+
+              </div>
+
+            </td>
+
+          </tr>
+
+        `;
+
+      }
+    );
+
+
+    this.dom[
+      'allocation-table-body'
+    ].innerHTML =
+      html;
+
+
+    this.dom[
+      'sum-demanded'
+    ].textContent =
+      `${totalDemand.toLocaleString()} L`;
+
+
+    this.dom[
+      'sum-allocated'
+    ].textContent =
+      `${allocatedTotal.toLocaleString()} L`;
+
+
+    this.dom[
+      'sum-unmet'
+    ].textContent =
+      `${Math.max(
+        0,
+        totalDemand -
+        allocatedTotal
+      ).toLocaleString()} L`;
+
+  }
+
+
+  /* =======================================================
+     IRRIGATION EXECUTION
+     ======================================================= */
+
+  executeIrrigationCycle() {
+
+    if (this.isSimulating) return;
+
+
+    if (
+      this.dispatchStatus.type ===
+      'DELAYED'
+    ) {
+
+      this.sound.playTone(
+        220,
+        'sawtooth',
+        0.2
+      );
+
+
+      alert(
+        `[AGRIFLOW ADVISORY]
+
+Irrigation DELAYED by Weather Gating.
+
+${this.dispatchStatus.reason}`
+      );
+
+
+      return;
+
+    }
+
+
+    const total =
+      this.regions.reduce(
+        (sum, region) =>
+          sum +
+          region.waterAllocated,
+        0
+      );
+
+
+    if (!total) return;
+
+
+    this.isSimulating = true;
+
+
+    const button =
+      document.getElementById(
+        'btn-run-simulation'
+      );
+
+
+    if (button) {
+
+      button.disabled = true;
+
+      button.textContent =
+        'Irrigating...';
+
+    }
+
+
+    this.regions.forEach(
+      region => {
+
+        if (
+          region.waterAllocated > 0
+        ) {
+
+          this.dom[
+            `card_${region.id}`
+          ].classList.add(
+            'irrigating'
+          );
+
+        }
+
+      }
+    );
+
+
+    this.sound.playWaterSprinkler();
+
+
+    this.logTelemetry(
+      'ACTION',
+      `Dispensing ${total.toLocaleString()} L across sectors.`
+    );
+
+
+    const duration =
+      2000;
+
+
+    const start =
+      performance.now();
+
+
+    const startingMoisture =
+      this.regions.map(
+        region =>
+          region.currentMoisture
+      );
+
+
+    const startingReservoir =
+      this.reservoir.waterAvailable;
+
+
+    const animate =
+      now => {
+
+        const progress =
+          Math.min(
+            1,
+            (
+              now -
+              start
+            ) /
+            duration
+          );
+
+
+        this.regions.forEach(
+          (region, index) => {
+
+            if (
+              region.waterAllocated > 0
+            ) {
+
+              const lift =
+                region.waterAllocated /
+                region.kFactor;
+
+
+              region.currentMoisture =
+                Math.min(
+
+                  region.targetMoisture,
+
+                  Math.round(
+
+                    (
+                      startingMoisture[
+                        index
+                      ] +
+
+                      lift *
+                      progress
+
+                    ) * 10
+
+                  ) / 10
+
+                );
+
+
+              this.dom[
+                `curVal_${region.id}`
+              ].textContent =
+                `${region.currentMoisture.toFixed(1)}%`;
+
+
+              this.dom[
+                `sliderCur_${region.id}`
+              ].value =
+                region.currentMoisture;
+
+            }
+
+          }
+        );
+
+
+        this.reservoir.waterAvailable =
+          Math.max(
+            0,
+            Math.round(
+              startingReservoir -
+              total *
+              progress
+            )
+          );
+
+
+        this.dom[
+          'reservoir-val-text'
+        ].textContent =
+          this.reservoir.waterAvailable
+            .toLocaleString();
+
+
+        this.dom[
+          'slider-reservoir'
+        ].value =
+          this.reservoir.waterAvailable;
+
+
+        this.recomputeAll();
+
+
+        if (
+          progress < 1
+        ) {
+
+          requestAnimationFrame(
+            animate
+          );
+
+        }
+
+        else {
+
+          this.regions.forEach(
+            region => {
+
+              this.dom[
+                `card_${region.id}`
+              ].classList.remove(
+                'irrigating'
+              );
+
+            }
+          );
+
+
+          this.isSimulating =
+            false;
+
+
+          if (button) {
+
+            button.disabled =
+              false;
+
+
+            button.innerHTML = `
+
+              <svg
+                class="icon"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+
+                <polygon
+                  points="5 3 19 12 5 21 5 3"
+                ></polygon>
+
+              </svg>
+
+              Execute Irrigation Cycle
+
+            `;
+
+          }
+
+
+          this.logTelemetry(
+            'ACTION',
+            'Irrigation cycle complete. Reservoir updated.'
+          );
+
+
+          this.sound.playTone(
+            880,
+            'sine',
+            0.2
+          );
+
+        }
+
+      };
+
+
+    requestAnimationFrame(
+      animate
+    );
+
+  }
+
+
+  /* =======================================================
+     RANDOM SCENARIO
+     ======================================================= */
+
+  randomizeScenario() {
+
+    const soilTypes =
+      Object.keys(
+        SOIL_PROFILES
+      );
+
+
+    this.regions.forEach(
+      region => {
+
+        region.soilType =
+          soilTypes[
+            Math.floor(
+              Math.random() *
+              soilTypes.length
+            )
+          ];
+
+
+        const profile =
+          SOIL_PROFILES[
+            region.soilType
+          ];
+
+
+        region.targetMoisture =
+          profile.defaultTarget;
+
+
+        region.kFactor =
+          this.generateRandomK(
+            region.soilType
+          );
+
+
+        region.currentMoisture =
+          Math.max(
+
+            4,
+
+            Math.round(
+
+              (
+                profile.wiltingPoint +
+
+                Math.random() *
+                (
+                  profile.defaultTarget -
+                  profile.wiltingPoint
+                )
+
+              ) * 10
+
+            ) / 10
+
+          );
+
+
+        document
+          .getElementById(
+            `soil-select-${region.id}`
+          )
+          .value =
+          region.soilType;
+
+
+        this.dom[
+          `tgtInput_${region.id}`
+        ].value =
+          region.targetMoisture;
+
+
+        this.dom[
+          `tgtLabel_${region.id}`
+        ].textContent =
+          `${region.targetMoisture}%`;
+
+
+        this.dom[
+          `tgtDisp_${region.id}`
+        ].textContent =
+          `${region.targetMoisture}%`;
+
+
+        this.dom[
+          `curVal_${region.id}`
+        ].textContent =
+          `${region.currentMoisture.toFixed(1)}%`;
+
+
+        this.dom[
+          `sliderCur_${region.id}`
+        ].value =
+          region.currentMoisture;
+
+
+        this.dom[
+          `kVal_${region.id}`
+        ].textContent =
+          `${region.kFactor} L/%`;
+
+      }
+    );
+
+
+    const modes = [
+
+      'sunny_dry',
+
+      'mild_opt',
+
+      'storm_incoming',
+
+      'light_drizzle'
+
+    ];
+
+
+    this.applyWeatherPreset(
+
+      modes[
+        Math.floor(
+          Math.random() *
+          modes.length
+        )
+      ]
+
+    );
+
+
+    const reservoirLevels = [
+
+      2500,
+
+      4500,
+
+      7500,
+
+      11000
+
+    ];
+
+
+    this.reservoir.waterAvailable =
+
+      reservoirLevels[
+        Math.floor(
+          Math.random() *
+          reservoirLevels.length
+        )
+      ];
+
+
+    this.dom[
+      'slider-reservoir'
+    ].value =
+      this.reservoir.waterAvailable;
+
+
+    this.dom[
+      'reservoir-val-text'
+    ].textContent =
+      this.reservoir.waterAvailable
+        .toLocaleString();
+
+
+    this.recomputeAll();
+
+
+    this.logTelemetry(
+      'SYSTEM',
+      'Random scenario initialized.'
+    );
+
+
+    this.sound.playTone(660);
+
+  }
+
+
+  /* =======================================================
+     TELEMETRY
+     ======================================================= */
+
+  logTelemetry(
+    type,
+    message
+  ) {
+
+    if (
+      !this.dom[
+        'terminal-logs-body'
+      ]
+    ) return;
+
+
+    const entry =
+      document.createElement(
+        'div'
+      );
+
+
+    entry.className =
+      `log-entry log-${type.toLowerCase()}`;
+
+
+    entry.innerHTML = `
+
+      <span class="log-time">
+
+        [
+        ${new Date().toLocaleTimeString()}
+        ]
+
+      </span>
+
+      <span class="log-msg">
+
+        ${message}
+
+      </span>
+
+    `;
+
+
+    this.dom[
+      'terminal-logs-body'
+    ].appendChild(
+      entry
+    );
+
+
+    this.dom[
+      'terminal-logs-body'
+    ].scrollTop =
+      this.dom[
+        'terminal-logs-body'
+      ].scrollHeight;
+
+  }
+
+}
 
 
 /* =========================================================
    START APPLICATION
-========================================================= */
+   ========================================================= */
 
-renderZones();
+window.addEventListener(
+  'DOMContentLoaded',
+  () => {
 
-render();
+    window.argiFlow =
+      new IrrigationControllerApp();
 
-log(
-  "Four-zone model ready. Soil sensors are simulated.",
-  "SYSTEM"
+    window.argiFlow.init();
+
+  }
 );
-
-log(
-  "Attempting Open-Meteo live weather connection...",
-  "WEATHER"
-);
-
-fetchWeather();

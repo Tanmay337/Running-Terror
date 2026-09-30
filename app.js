@@ -1,7 +1,7 @@
 /**
  * ArgiFlow™️ // Autonomous Precision Agro-Hydrology Engine
  * Pure ES6+ Modular State-Driven Architecture
- * Automated Soil & Weather Telemetry Model
+ * Automated Telemetry & Location-Driven Dynamic Demand Model
  */
 
 class AudioController {
@@ -38,8 +38,8 @@ class AudioController {
 }
 
 const SOIL_PROFILES = {
-  clay: { name: 'Clay Soil', defaultTarget: 36, wiltingPoint: 22, fieldCapacity: 45, kMin: 130, kMax: 170, droughtVulnerability: 0.85, retentionMultiplier: 0.2 },
-  sandy: { name: 'Sandy Soil', defaultTarget: 18, wiltingPoint: 7, fieldCapacity: 25, kMin: 65, kMax: 95, droughtVulnerability: 1.45, retentionMultiplier: 0.7 },
+  clay: { name: 'Clay Soil', defaultTarget: 36, wiltingPoint: 22, fieldCapacity: 45, kMin: 130, kMax: 170, droughtVulnerability: 0.85, retentionMultiplier: 0.20 },
+  sandy: { name: 'Sandy Soil', defaultTarget: 18, wiltingPoint: 7, fieldCapacity: 25, kMin: 65, kMax: 95, droughtVulnerability: 1.45, retentionMultiplier: 0.70 },
   loamy: { name: 'Loamy Soil', defaultTarget: 28, wiltingPoint: 13, fieldCapacity: 35, kMin: 95, kMax: 135, droughtVulnerability: 1.00, retentionMultiplier: 0.35 },
   silt_loam: { name: 'Silt Loam', defaultTarget: 32, wiltingPoint: 15, fieldCapacity: 40, kMin: 110, kMax: 150, droughtVulnerability: 0.95, retentionMultiplier: 0.28 },
   peaty: { name: 'Peaty / Org', defaultTarget: 42, wiltingPoint: 24, fieldCapacity: 55, kMin: 140, kMax: 190, droughtVulnerability: 0.80, retentionMultiplier: 0.18 }
@@ -59,11 +59,14 @@ class IrrigationControllerApp {
     this.totalArea = 100; // Custom monitored land in Hectares
     this.quadrantArea = 25.0; // Scaled per quadrant (totalArea / 4)
 
+    this.currentLocationName = "Jaipur, India";
+    this.coords = { lat: 26.9124, lon: 75.7873 };
+
     this.regions = [
-      { id: 1, letter: 'A', name: 'Sector Alpha', quadrant: 'NW', crop: 'Soybeans', stage: 'mid', soilType: 'clay', targetMoisture: 36, currentMoisture: 23, kBase: 145, kFactor: 145, deficit: 0, etc: 0, waterRequired: 0, waterAllocated: 0, sensorFailed: false, isIrrigating: false },
-      { id: 2, letter: 'B', name: 'Sector Beta', quadrant: 'NE', crop: 'Maize / Corn', stage: 'development', soilType: 'sandy', targetMoisture: 18, currentMoisture: 10, kBase: 78, kFactor: 78, deficit: 0, etc: 0, waterRequired: 0, waterAllocated: 0, sensorFailed: false, isIrrigating: false },
-      { id: 3, letter: 'C', name: 'Sector Gamma', quadrant: 'SW', crop: 'Winter Wheat', stage: 'development', soilType: 'loamy', targetMoisture: 28, currentMoisture: 17, kBase: 112, kFactor: 112, deficit: 0, etc: 0, waterRequired: 0, waterAllocated: 0, sensorFailed: false, isIrrigating: false },
-      { id: 4, letter: 'D', name: 'Sector Delta', quadrant: 'SE', crop: 'Sunflowers', stage: 'initial', soilType: 'silt_loam', targetMoisture: 32, currentMoisture: 21, kBase: 126, kFactor: 126, deficit: 0, etc: 0, waterRequired: 0, waterAllocated: 0, sensorFailed: false, isIrrigating: false }
+      { id: 1, letter: 'A', name: 'Sector Alpha', quadrant: 'NW', crop: 'Soybeans', stage: 'mid', soilType: 'clay', targetMoisture: 36, currentMoisture: 24.0, kBase: 145, kFactor: 145, deficit: 0, etc: 0, etcLiters: 0, waterRequired: 0, waterAllocated: 0, sensorFailed: false, isIrrigating: false },
+      { id: 2, letter: 'B', name: 'Sector Beta', quadrant: 'NE', crop: 'Maize / Corn', stage: 'development', soilType: 'sandy', targetMoisture: 18, currentMoisture: 11.0, kBase: 78, kFactor: 78, deficit: 0, etc: 0, etcLiters: 0, waterRequired: 0, waterAllocated: 0, sensorFailed: false, isIrrigating: false },
+      { id: 3, letter: 'C', name: 'Sector Gamma', quadrant: 'SW', crop: 'Winter Wheat', stage: 'development', soilType: 'loamy', targetMoisture: 28, currentMoisture: 18.0, kBase: 112, kFactor: 112, deficit: 0, etc: 0, etcLiters: 0, waterRequired: 0, waterAllocated: 0, sensorFailed: false, isIrrigating: false },
+      { id: 4, letter: 'D', name: 'Sector Delta', quadrant: 'SE', crop: 'Sunflowers', stage: 'initial', soilType: 'silt_loam', targetMoisture: 32, currentMoisture: 22.0, kBase: 126, kFactor: 126, deficit: 0, etc: 0, etcLiters: 0, waterRequired: 0, waterAllocated: 0, sensorFailed: false, isIrrigating: false }
     ];
 
     this.weather = {
@@ -72,7 +75,9 @@ class IrrigationControllerApp {
       temperatureC: 30,
       windSpeedKmh: 12,
       et0: 4.8,
-      vpd: 1.4
+      vpd: 1.4,
+      forecastDays: ['Day 1', 'Day 2', 'Day 3', 'Day 4', 'Day 5'],
+      forecastET0: [4.8, 5.2, 3.9, 4.5, 5.0]
     };
 
     this.reservoir = {
@@ -94,10 +99,8 @@ class IrrigationControllerApp {
     this.bindEvents();
     this.updateAreaScale(this.totalArea);
     this.setReservoirAvailable(this.reservoir.waterAvailable, false);
-    this.fetchWeather();
-    this.recomputeAll();
-    this.initCharts();
-    this.logTelemetry('SYSTEM', `🌱 ArgiFlow Autonomous Engine active. Land: ${this.totalArea} Ha | Reservoir: ${this.reservoir.waterAvailable.toLocaleString()} L.`);
+    this.fetchWeather(this.coords.lat, this.coords.lon, this.currentLocationName);
+    this.logTelemetry('SYSTEM', `🌱 ArgiFlow Autonomous Engine active. Monitored Area: ${this.totalArea} Ha | Storage: ${this.reservoir.waterAvailable.toLocaleString()} L.`);
   }
 
   cacheStaticDOM() {
@@ -233,7 +236,7 @@ class IrrigationControllerApp {
         <div class="moisture">
           <div class="moisture-head">
             <span>Soil Moisture (VWC)</span>
-            <span><strong id="cur-m-${r.id}">${r.currentMoisture}%</strong> / <span id="tgt-m-${r.id}">${r.targetMoisture}%</span></span>
+            <span><strong id="cur-m-${r.id}">${r.currentMoisture.toFixed(1)}%</strong> / <span id="tgt-m-${r.id}">${r.targetMoisture}%</span></span>
           </div>
           <div class="meter">
             <div class="meter-current" id="meter-bar-${r.id}" style="transform: scaleX(${Math.min(1, r.currentMoisture / 50)});"></div>
@@ -247,7 +250,7 @@ class IrrigationControllerApp {
             <b id="def-val-${r.id}">${r.deficit}%</b>
           </div>
           <div class="zone-stat">
-            <span>ETc</span>
+            <span>ETc (Loss)</span>
             <b id="etc-val-${r.id}">${r.etc} mm</b>
           </div>
           <div class="zone-stat">
@@ -274,14 +277,14 @@ class IrrigationControllerApp {
         r.kBase = Math.round(prof.kMin + Math.random() * (prof.kMax - prof.kMin));
         r.kFactor = Math.round(r.kBase * (this.quadrantArea / 25.0));
 
-        // Re-simulate realistic moisture on soil change
-        r.currentMoisture = Math.max(prof.wiltingPoint + 2, Math.round((prof.wiltingPoint + Math.random() * (prof.defaultTarget - prof.wiltingPoint)) * 10) / 10);
+        // Adjust baseline moisture according to soil water-holding characteristics
+        r.currentMoisture = Math.max(prof.wiltingPoint + 1, Math.round((prof.wiltingPoint + (prof.defaultTarget - prof.wiltingPoint) * 0.5) * 10) / 10);
 
         document.getElementById(`tgt-m-${id}`).textContent = `${r.targetMoisture}%`;
         document.getElementById(`cur-m-${id}`).textContent = `${r.currentMoisture.toFixed(1)}%`;
         document.getElementById(`meter-bar-${id}`).style.transform = `scaleX(${Math.min(1, r.currentMoisture / 50)})`;
 
-        this.logTelemetry('ACTION', `${r.name} switched to ${prof.name}. Target adjusted to ${prof.defaultTarget}%.`);
+        this.logTelemetry('ACTION', `${r.name} switched to ${prof.name}. Target set to ${prof.defaultTarget}%.`);
         this.recomputeAll();
       });
     });
@@ -310,14 +313,14 @@ class IrrigationControllerApp {
         if (r.sensorFailed) zoneCard.classList.add('failed');
         else zoneCard.classList.remove('failed');
 
-        this.logTelemetry('WARN', `${r.name} probe state toggled ${r.sensorFailed ? 'OFFLINE (FAO-56 ET Imputation Active)' : 'ONLINE'}.`);
+        this.logTelemetry('WARN', `${r.name} probe state toggled ${r.sensorFailed ? 'OFFLINE (FAO-56 Imputation Active)' : 'ONLINE'}.`);
         this.recomputeAll();
       });
     });
   }
 
   bindEvents() {
-    // 1. Monitored Area Custom Input
+    // Monitored Area Input
     if (this.dom.inputTotalArea) {
       this.dom.inputTotalArea.addEventListener('input', (e) => {
         const val = parseFloat(e.target.value) || 4;
@@ -330,7 +333,7 @@ class IrrigationControllerApp {
       });
     }
 
-    // 2. Reservoir KPI Custom Input
+    // Reservoir Inputs
     if (this.dom.inputKpiReservoir) {
       this.dom.inputKpiReservoir.addEventListener('input', (e) => {
         const val = parseFloat(e.target.value) || 0;
@@ -344,7 +347,6 @@ class IrrigationControllerApp {
       });
     }
 
-    // 3. Studio Reservoir Custom Input
     if (this.dom.resValInput) {
       this.dom.resValInput.addEventListener('input', (e) => {
         const val = parseFloat(e.target.value) || 0;
@@ -358,7 +360,6 @@ class IrrigationControllerApp {
       });
     }
 
-    // Studio Slider Input
     if (this.dom.resSlider) {
       this.dom.resSlider.addEventListener('input', (e) => {
         const val = parseInt(e.target.value, 10);
@@ -367,7 +368,6 @@ class IrrigationControllerApp {
       });
     }
 
-    // Quick chips
     document.querySelectorAll('.chips button').forEach(btn => {
       btn.addEventListener('click', (e) => {
         const val = parseInt(e.target.dataset.res, 10);
@@ -376,16 +376,13 @@ class IrrigationControllerApp {
       });
     });
 
-    // Sound toggle
     document.getElementById('btn-sound-toggle')?.addEventListener('click', (e) => {
       this.sound.enabled = !this.sound.enabled;
       e.target.textContent = this.sound.enabled ? '🔊' : '🔇';
     });
 
-    // Execute run
     document.getElementById('btn-run')?.addEventListener('click', () => this.executeIrrigationCycle());
 
-    // Fail all sensors
     document.getElementById('btn-fail-all')?.addEventListener('click', () => {
       const anyHealthy = this.regions.some(r => !r.sensorFailed);
       this.regions.forEach(r => { r.sensorFailed = anyHealthy; });
@@ -394,7 +391,6 @@ class IrrigationControllerApp {
       this.recomputeAll();
     });
 
-    // Advance 1 day (evapotranspiration simulation)
     document.getElementById('btn-evap')?.addEventListener('click', () => {
       this.simulateAutonomousDailyEvaporation();
     });
@@ -405,9 +401,15 @@ class IrrigationControllerApp {
       if (query) this.searchLocation(query);
     });
 
+    document.getElementById('location-input')?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        const query = e.target.value;
+        if (query) this.searchLocation(query);
+      }
+    });
+
     document.getElementById('btn-location')?.addEventListener('click', () => this.getGeolocation());
 
-    // Strategy & Mode
     document.getElementById('strategy')?.addEventListener('change', (e) => {
       this.optimizationStrategy = e.target.value;
       this.recomputeAll();
@@ -428,62 +430,22 @@ class IrrigationControllerApp {
   simulateAutonomousDailyEvaporation() {
     this.regions.forEach(r => {
       const prof = SOIL_PROFILES[r.soilType];
-      // Depletion is driven by atmospheric ETc scaled by soil percolation characteristics
-      const dailyLoss = (r.etc * 0.5) * prof.retentionMultiplier;
+      const dailyLoss = (r.etc * 0.45) * prof.retentionMultiplier;
       r.currentMoisture = Math.max(prof.wiltingPoint - 1, Math.round((r.currentMoisture - dailyLoss) * 10) / 10);
-      
+
       const curEl = document.getElementById(`cur-m-${r.id}`);
       if (curEl) curEl.textContent = `${r.currentMoisture.toFixed(1)}%`;
       const barEl = document.getElementById(`meter-bar-${r.id}`);
       if (barEl) barEl.style.transform = `scaleX(${Math.min(1, r.currentMoisture / 50)})`;
     });
 
-    this.logTelemetry('ACTION', `Day advanced: Simulated autonomous depletion from ETc (${this.weather.et0} mm reference) and soil percolation.`);
+    this.logTelemetry('ACTION', `Day advanced: Simulated depletion via local ET₀ (${this.weather.et0} mm) and crop transpiration.`);
     this.recomputeAll();
-  }
-
-  async fetchWeather(lat = 26.9124, lon = 75.7873) {
-    try {
-      const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&daily=precipitation_sum,et0_fao_evapotranspiration&current_weather=true&hourly=relativehumidity_2m&timezone=auto`;
-      const res = await fetch(url);
-      if (!res.ok) throw new Error('API unreachable');
-      const data = await res.json();
-
-      this.weather.rainForecastMm = data.daily?.precipitation_sum?.[0] ?? 0;
-      this.weather.temperatureC = data.current_weather?.temperature ?? 30;
-      this.weather.windSpeedKmh = data.current_weather?.windspeed ?? 12;
-      this.weather.humidityPct = data.hourly?.relativehumidity_2m?.[0] ?? 45;
-      this.weather.et0 = data.daily?.et0_fao_evapotranspiration?.[0] ?? 4.8;
-
-      // Vapor Pressure Deficit calculation
-      const es = 0.6108 * Math.exp((17.27 * this.weather.temperatureC) / (this.weather.temperatureC + 237.3));
-      const ea = es * (this.weather.humidityPct / 100);
-      this.weather.vpd = Math.round((es - ea) * 10) / 10;
-
-      // Autonomously recharge soil moisture if rain forecast is active
-      if (this.weather.rainForecastMm > 0) {
-        this.regions.forEach(r => {
-          const prof = SOIL_PROFILES[r.soilType];
-          const rainRecharge = this.weather.rainForecastMm * 0.4;
-          r.currentMoisture = Math.min(prof.fieldCapacity, Math.round((r.currentMoisture + rainRecharge) * 10) / 10);
-          const curEl = document.getElementById(`cur-m-${r.id}`);
-          if (curEl) curEl.textContent = `${r.currentMoisture.toFixed(1)}%`;
-          const barEl = document.getElementById(`meter-bar-${r.id}`);
-          if (barEl) barEl.style.transform = `scaleX(${Math.min(1, r.currentMoisture / 50)})`;
-        });
-      }
-
-      const statusPill = document.getElementById('api-status');
-      if (statusPill) statusPill.innerHTML = '<span class="pulse-dot"></span><span>WEATHER: OPEN-METEO LIVE</span>';
-
-      this.recomputeAll();
-    } catch (err) {
-      this.recomputeAll();
-    }
   }
 
   async searchLocation(query) {
     try {
+      this.logTelemetry('SYSTEM', `Geocoding lookup for: "${query}"...`);
       const res = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query)}&count=4`);
       const data = await res.json();
       const resultsDiv = document.getElementById('location-results');
@@ -494,40 +456,135 @@ class IrrigationControllerApp {
         data.results.forEach(loc => {
           const chip = document.createElement('div');
           chip.className = 'location-chip';
-          chip.textContent = `${loc.name}, ${loc.country || ''}`;
+          const label = `${loc.name}${loc.admin1 ? ', ' + loc.admin1 : ''}, ${loc.country || ''}`;
+          chip.textContent = label;
           chip.onclick = () => {
-            document.getElementById('location-input').value = `${loc.name}, ${loc.country || ''}`;
+            document.getElementById('location-input').value = label;
             resultsDiv.innerHTML = '';
-            this.fetchWeather(loc.latitude, loc.longitude);
-            this.logTelemetry('SYSTEM', `Location changed to ${loc.name}. Autonomous weather telemetry calibrated.`);
+            this.coords = { lat: loc.latitude, lon: loc.longitude };
+            this.currentLocationName = label;
+            this.fetchWeather(loc.latitude, loc.longitude, label);
           };
           resultsDiv.appendChild(chip);
         });
+
+        // Auto-select first result on enter/click
+        const top = data.results[0];
+        const topLabel = `${top.name}${top.admin1 ? ', ' + top.admin1 : ''}, ${top.country || ''}`;
+        this.coords = { lat: top.latitude, lon: top.longitude };
+        this.currentLocationName = topLabel;
+        this.fetchWeather(top.latitude, top.longitude, topLabel);
+      } else {
+        this.logTelemetry('WARN', `Location "${query}" not found.`);
       }
-    } catch (e) {}
+    } catch (e) {
+      this.logTelemetry('WARN', `Geocoding network error: ${e.message}`);
+    }
   }
 
   getGeolocation() {
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (pos) => {
-          this.fetchWeather(pos.coords.latitude, pos.coords.longitude);
-          document.getElementById('location-input').value = `GPS: ${pos.coords.latitude.toFixed(2)}, ${pos.coords.longitude.toFixed(2)}`;
-          this.logTelemetry('SYSTEM', 'Autonomous GPS telemetry ingested.');
+          const lat = pos.coords.latitude;
+          const lon = pos.coords.longitude;
+          const label = `GPS (${lat.toFixed(2)}, ${lon.toFixed(2)})`;
+          document.getElementById('location-input').value = label;
+          this.coords = { lat, lon };
+          this.currentLocationName = label;
+          this.fetchWeather(lat, lon, label);
         },
         () => this.logTelemetry('WARN', 'GPS permission denied. Using default coordinates.')
       );
     }
   }
 
+  async fetchWeather(lat, lon, locationLabel) {
+    try {
+      const statusPill = document.getElementById('api-status');
+      if (statusPill) statusPill.innerHTML = '<span class="pulse-dot"></span><span>SYNCING TELEMETRY...</span>';
+
+      // Open-Meteo Weather Forecast API endpoint fetching FAO-56 reference ET0 and rainfall
+      const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&daily=precipitation_sum,et0_fao_evapotranspiration,temperature_2m_max&current_weather=true&hourly=relativehumidity_2m&timezone=auto`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+
+      this.weather.rainForecastMm = data.daily?.precipitation_sum?.[0] ?? 0;
+      this.weather.temperatureC = data.current_weather?.temperature ?? 28;
+      this.weather.windSpeedKmh = data.current_weather?.windspeed ?? 10;
+      this.weather.humidityPct = data.hourly?.relativehumidity_2m?.[0] ?? 50;
+      this.weather.et0 = data.daily?.et0_fao_evapotranspiration?.[0] ?? 4.5;
+
+      // Extract 5-day forecast for Plotly charts
+      if (data.daily?.time && data.daily?.et0_fao_evapotranspiration) {
+        this.weather.forecastDays = data.daily.time.slice(0, 5).map(t => {
+          const d = new Date(t);
+          return d.toLocaleDateString(undefined, { weekday: 'short', month: 'numeric', day: 'numeric' });
+        });
+        this.weather.forecastET0 = data.daily.et0_fao_evapotranspiration.slice(0, 5);
+      }
+
+      // Vapor Pressure Deficit (VPD) computation from temperature & relative humidity
+      const es = 0.6108 * Math.exp((17.27 * this.weather.temperatureC) / (this.weather.temperatureC + 237.3));
+      const ea = es * (this.weather.humidityPct / 100);
+      this.weather.vpd = Math.max(0.1, Math.round((es - ea) * 10) / 10);
+
+      // AUTONOMOUS SOIL MOISTURE RETENTION/DEPLETION ADAPTATION
+      // Adjust in-situ soil moisture dynamically to match the local climate
+      this.regions.forEach(r => {
+        const prof = SOIL_PROFILES[r.soilType];
+        // Environmental drying factor: higher VPD and temperature reduce moisture
+        const dryingFactor = (this.weather.vpd * 0.4) + (this.weather.et0 * 0.15);
+        const naturalRainInfiltration = (this.weather.rainForecastMm * 0.35);
+
+        let adjusted = r.targetMoisture - (dryingFactor * prof.retentionMultiplier * 4) + naturalRainInfiltration;
+        r.currentMoisture = Math.max(prof.wiltingPoint, Math.min(prof.fieldCapacity, Math.round(adjusted * 10) / 10));
+
+        const curEl = document.getElementById(`cur-m-${r.id}`);
+        if (curEl) curEl.textContent = `${r.currentMoisture.toFixed(1)}%`;
+        const barEl = document.getElementById(`meter-bar-${r.id}`);
+        if (barEl) barEl.style.transform = `scaleX(${Math.min(1, r.currentMoisture / 50)})`;
+      });
+
+      if (statusPill) statusPill.innerHTML = '<span class="pulse-dot"></span><span>WEATHER: OPEN-METEO LIVE</span>';
+      this.logTelemetry('SYSTEM', `Telemetry synchronized for ${locationLabel}: ET₀=${this.weather.et0} mm/d, Rain=${this.weather.rainForecastMm} mm, Temp=${this.weather.temperatureC}°C, RH=${this.weather.humidityPct}%.`);
+
+      this.recomputeAll();
+      this.updateForecastChart();
+    } catch (err) {
+      this.logTelemetry('WARN', `Failed to fetch weather telemetry: ${err.message}. Using cached state.`);
+      this.recomputeAll();
+    }
+  }
+
   recomputeAll() {
     let totalDemand = 0;
 
+    // INTEGRATED DEMAND CALCULATION:
+    // Demand is driven by two real-world factors:
+    // 1. Root-Zone Volumetric Deficit = ΔM × K_factor (Liters required to raise soil to target)
+    // 2. Transpiration Replacement Demand = ETc (mm) × Area (ha) × 10,000 (L/ha-mm)
     this.regions.forEach(r => {
       const kc = CROP_STAGES[r.stage].kc;
+      // Crop evapotranspiration rate: ETc = ET0 * Kc
       r.etc = Math.round((this.weather.et0 * kc) * 10) / 10;
+
+      // Volumetric moisture deficit percentage
       r.deficit = Math.max(0, Math.round((r.targetMoisture - r.currentMoisture) * 10) / 10);
-      r.waterRequired = Math.round(r.deficit * r.kFactor * 100);
+
+      // Deficit volume lift in Liters
+      const deficitLiters = r.deficit * r.kFactor * 100;
+
+      // Daily crop water consumption in Liters (1 mm over 1 ha = 10,000 L)
+      r.etcLiters = Math.round(r.etc * this.quadrantArea * 10000);
+
+      // If soil deficit exists, required water covers the deficit plus atmospheric transpiration
+      if (r.deficit > 0) {
+        r.waterRequired = Math.round(deficitLiters + (r.etcLiters * 0.5));
+      } else {
+        r.waterRequired = 0;
+      }
 
       totalDemand += r.waterRequired;
 
@@ -557,21 +614,21 @@ class IrrigationControllerApp {
       this.dispatchStatus = {
         type: 'STANDBY',
         title: 'STANDBY // OPTIMAL SOIL MOISTURE',
-        reason: 'Soil water content is currently satisfied across monitored sectors.',
+        reason: 'Soil water content is satisfied across monitored sectors.',
         waterSaved: 0
       };
     } else if (rain >= 5) {
       this.dispatchStatus = {
         type: 'DELAYED',
-        title: 'IRRIGATION DELAYED // HEAVY RAIN IMMINENT',
-        reason: `Automated forecast predicts ${rain} mm rainfall. Natural precipitation satisfies root zone.`,
+        title: 'IRRIGATION DELAYED // RAINFALL GATED',
+        reason: `Weather forecast predicts ${rain} mm rainfall. Natural precipitation satisfies root zone.`,
         waterSaved: totalDemand
       };
     } else if (hum >= 80 && rain >= 2) {
       this.dispatchStatus = {
         type: 'DELAYED',
-        title: 'IRRIGATION DELAYED // HIGH HUMIDITY & LIGHT RAIN',
-        reason: `Relative humidity (${hum}%) and passing drizzle suppresses crop transpiration.`,
+        title: 'IRRIGATION DELAYED // HIGH HUMIDITY & DRIZZLE',
+        reason: `Relative humidity (${hum}%) and drizzle minimizes crop transpiration.`,
         waterSaved: totalDemand
       };
     } else {
@@ -703,7 +760,7 @@ class IrrigationControllerApp {
       card.className = 'sensor-card';
       card.innerHTML = `
         <span>Zone ${r.letter} Sensor</span>
-        <b class="${r.sensorFailed ? 'sensor-fail' : 'sensor-ok'}">${r.sensorFailed ? 'FAULT // ET Estimation' : 'LIVE // In-Situ'}</b>
+        <b class="${r.sensorFailed ? 'sensor-fail' : 'sensor-ok'}">${r.sensorFailed ? 'FAULT // ET Model' : 'HEALTHY // In-Situ'}</b>
       `;
       this.dom.sensorHealth.appendChild(card);
     });
@@ -713,6 +770,7 @@ class IrrigationControllerApp {
     if (!this.dom.dynamicWater) return;
 
     const dynamicTotal = this.regions.reduce((a, b) => a + b.waterAllocated, 0);
+    // Baseline uniform calendar watering: 50 mm equivalent over entire acreage
     const fixedTotal = Math.round(this.totalArea * 500000);
     const saved = Math.max(0, fixedTotal - dynamicTotal);
     const savedPct = Math.round((saved / fixedTotal) * 100);
@@ -728,6 +786,8 @@ class IrrigationControllerApp {
 
     const stressedZones = this.regions.filter(r => r.deficit > 10).length;
     this.dom.stressResult.textContent = `${stressedZones} of 4 zones`;
+
+    this.updateComparisonChart();
   }
 
   executeIrrigationCycle() {
@@ -798,20 +858,27 @@ class IrrigationControllerApp {
   }
 
   initCharts() {
-    if (typeof Plotly === 'undefined') return;
+    this.updateComparisonChart();
+    this.updateForecastChart();
+  }
 
-    // Precision vs Fixed comparison chart
+  updateComparisonChart() {
+    if (typeof Plotly === 'undefined' || !document.getElementById('comparison-chart')) return;
+
+    const dynamicValues = this.regions.map(r => (r.waterAllocated / 1000000));
+    const fixedValues = this.regions.map(() => ((this.quadrantArea * 50000) / 1000000));
+
     const compData = [
       {
         x: ['Sector A', 'Sector B', 'Sector C', 'Sector D'],
-        y: [1.2, 0.8, 1.0, 0.9],
+        y: dynamicValues,
         name: 'Precision Controller',
         type: 'bar',
-        marker: { color: '#2e7d52' }
+        marker: { color: '#1b5e38' }
       },
       {
         x: ['Sector A', 'Sector B', 'Sector C', 'Sector D'],
-        y: [2.5, 2.5, 2.5, 2.5],
+        y: fixedValues,
         name: 'Fixed Schedule',
         type: 'bar',
         marker: { color: '#8a978f' }
@@ -828,12 +895,15 @@ class IrrigationControllerApp {
       legend: { orientation: 'h', y: 1.15 }
     };
 
-    Plotly.newPlot('comparison-chart', compData, compLayout, { responsive: true, displayModeBar: false });
+    Plotly.react('comparison-chart', compData, compLayout, { responsive: true, displayModeBar: false });
+  }
 
-    // Weather forecast chart
+  updateForecastChart() {
+    if (typeof Plotly === 'undefined' || !document.getElementById('forecast-chart')) return;
+
     const foreData = [{
-      x: ['Day 1', 'Day 2', 'Day 3', 'Day 4', 'Day 5'],
-      y: [4.8, 5.2, 3.9, 4.5, 5.0],
+      x: this.weather.forecastDays,
+      y: this.weather.forecastET0,
       type: 'scatter',
       mode: 'lines+markers',
       name: 'ET₀ (mm)',
@@ -847,7 +917,7 @@ class IrrigationControllerApp {
       yaxis: { title: 'Reference ET₀ (mm)' }
     };
 
-    Plotly.newPlot('forecast-chart', foreData, foreLayout, { responsive: true, displayModeBar: false });
+    Plotly.react('forecast-chart', foreData, foreLayout, { responsive: true, displayModeBar: false });
   }
 
   logTelemetry(type, message) {

@@ -1,7 +1,8 @@
 /**
- * ArgiFlow™️ // Autonomous Precision Agro-Hydrology Engine
+ * AgriFlow™️ // Autonomous Precision Agro-Hydrology Engine
  * Pure ES6+ Modular State-Driven Architecture
  * Automated Telemetry & Location-Driven Dynamic Demand Model
+ * With Manual Override Sliders for Zones, Soil, and Atmospheric Telemetry
  */
 
 class AudioController {
@@ -100,7 +101,7 @@ class IrrigationControllerApp {
     this.updateAreaScale(this.totalArea);
     this.setReservoirAvailable(this.reservoir.waterAvailable, false);
     this.fetchWeather(this.coords.lat, this.coords.lon, this.currentLocationName);
-    this.logTelemetry('SYSTEM', `🌱 ArgiFlow Autonomous Engine active. Monitored Area: ${this.totalArea} Ha | Storage: ${this.reservoir.waterAvailable.toLocaleString()} L.`);
+    this.logTelemetry('SYSTEM', `🌱 AgriFlow Engine active. Monitored Area: ${this.totalArea} Ha | Storage: ${this.reservoir.waterAvailable.toLocaleString()} L.`);
   }
 
   cacheStaticDOM() {
@@ -124,6 +125,16 @@ class IrrigationControllerApp {
     this.dom.wWind = document.getElementById('w-wind');
     this.dom.wEt0 = document.getElementById('w-et0');
     this.dom.wVpd = document.getElementById('w-vpd');
+
+    this.dom.sliderRain = document.getElementById('slider-rain');
+    this.dom.sliderTemp = document.getElementById('slider-temp');
+    this.dom.sliderHumidity = document.getElementById('slider-humidity');
+    this.dom.sliderWind = document.getElementById('slider-wind');
+
+    this.dom.valRain = document.getElementById('val-rain');
+    this.dom.valTemp = document.getElementById('val-temp');
+    this.dom.valHumidity = document.getElementById('val-humidity');
+    this.dom.valWind = document.getElementById('val-wind');
 
     this.dom.decisionBox = document.getElementById('decision');
     this.dom.decisionTitle = document.getElementById('decision-title');
@@ -228,6 +239,12 @@ class IrrigationControllerApp {
           </div>
         </div>
 
+        <!-- Target Moisture Slider -->
+        <div class="sub-slider-wrap">
+          <label for="slider-target-${r.id}">Target Moisture: <b id="val-target-label-${r.id}">${r.targetMoisture}%</b></label>
+          <input type="range" class="slider-target" id="slider-target-${r.id}" data-id="${r.id}" min="5" max="50" step="1" value="${r.targetMoisture}">
+        </div>
+
         <div class="sensor-line">
           <span>Telemetry: <b class="${r.sensorFailed ? 'sensor-fail' : 'sensor-ok'}" id="sensor-status-${r.id}">${r.sensorFailed ? 'FAULT // ET Estimation' : 'LIVE // In-Situ'}</b></span>
           <button class="sensor-toggle" data-id="${r.id}">[${r.sensorFailed ? 'Restore' : 'Simulate Fail'}]</button>
@@ -240,7 +257,13 @@ class IrrigationControllerApp {
           </div>
           <div class="meter">
             <div class="meter-current" id="meter-bar-${r.id}" style="transform: scaleX(${Math.min(1, r.currentMoisture / 50)});"></div>
-            <div class="meter-target" style="left: ${(r.targetMoisture / 50) * 100}%;"></div>
+            <div class="meter-target" id="meter-target-${r.id}" style="left: ${(r.targetMoisture / 50) * 100}%;"></div>
+          </div>
+          
+          <!-- In-Situ Moisture Slider -->
+          <div class="sub-slider-wrap">
+            <label for="slider-moisture-${r.id}">In-Situ Override: <b id="val-moisture-label-${r.id}">${r.currentMoisture.toFixed(1)}%</b></label>
+            <input type="range" class="slider-moisture" id="slider-moisture-${r.id}" data-id="${r.id}" min="0" max="50" step="0.5" value="${r.currentMoisture}">
           </div>
         </div>
 
@@ -277,12 +300,22 @@ class IrrigationControllerApp {
         r.kBase = Math.round(prof.kMin + Math.random() * (prof.kMax - prof.kMin));
         r.kFactor = Math.round(r.kBase * (this.quadrantArea / 25.0));
 
-        // Adjust baseline moisture according to soil water-holding characteristics
         r.currentMoisture = Math.max(prof.wiltingPoint + 1, Math.round((prof.wiltingPoint + (prof.defaultTarget - prof.wiltingPoint) * 0.5) * 10) / 10);
+
+        const targetSlider = document.getElementById(`slider-target-${id}`);
+        if (targetSlider) targetSlider.value = r.targetMoisture;
+        const targetLabel = document.getElementById(`val-target-label-${id}`);
+        if (targetLabel) targetLabel.textContent = `${r.targetMoisture}%`;
+
+        const moistSlider = document.getElementById(`slider-moisture-${id}`);
+        if (moistSlider) moistSlider.value = r.currentMoisture;
+        const moistLabel = document.getElementById(`val-moisture-label-${id}`);
+        if (moistLabel) moistLabel.textContent = `${r.currentMoisture.toFixed(1)}%`;
 
         document.getElementById(`tgt-m-${id}`).textContent = `${r.targetMoisture}%`;
         document.getElementById(`cur-m-${id}`).textContent = `${r.currentMoisture.toFixed(1)}%`;
         document.getElementById(`meter-bar-${id}`).style.transform = `scaleX(${Math.min(1, r.currentMoisture / 50)})`;
+        document.getElementById(`meter-target-${id}`).style.left = `${(r.targetMoisture / 50) * 100}%`;
 
         this.logTelemetry('ACTION', `${r.name} switched to ${prof.name}. Target set to ${prof.defaultTarget}%.`);
         this.recomputeAll();
@@ -294,6 +327,44 @@ class IrrigationControllerApp {
         const id = parseInt(e.target.dataset.id, 10);
         const r = this.regions.find(x => x.id === id);
         r.stage = e.target.value;
+        this.recomputeAll();
+      });
+    });
+
+    // Sector Target Moisture Slider Event
+    document.querySelectorAll('.slider-target').forEach(slider => {
+      slider.addEventListener('input', (e) => {
+        const id = parseInt(e.target.dataset.id, 10);
+        const val = parseFloat(e.target.value);
+        const r = this.regions.find(x => x.id === id);
+        r.targetMoisture = val;
+
+        const targetLabel = document.getElementById(`val-target-label-${id}`);
+        if (targetLabel) targetLabel.textContent = `${val}%`;
+        const tgtM = document.getElementById(`tgt-m-${id}`);
+        if (tgtM) tgtM.textContent = `${val}%`;
+        const meterTarget = document.getElementById(`meter-target-${id}`);
+        if (meterTarget) meterTarget.style.left = `${(val / 50) * 100}%`;
+
+        this.recomputeAll();
+      });
+    });
+
+    // Sector In-Situ Moisture Slider Event
+    document.querySelectorAll('.slider-moisture').forEach(slider => {
+      slider.addEventListener('input', (e) => {
+        const id = parseInt(e.target.dataset.id, 10);
+        const val = parseFloat(e.target.value);
+        const r = this.regions.find(x => x.id === id);
+        r.currentMoisture = val;
+
+        const moistLabel = document.getElementById(`val-moisture-label-${id}`);
+        if (moistLabel) moistLabel.textContent = `${val.toFixed(1)}%`;
+        const curM = document.getElementById(`cur-m-${id}`);
+        if (curM) curM.textContent = `${val.toFixed(1)}%`;
+        const meterBar = document.getElementById(`meter-bar-${id}`);
+        if (meterBar) meterBar.style.transform = `scaleX(${Math.min(1, val / 50)})`;
+
         this.recomputeAll();
       });
     });
@@ -368,6 +439,34 @@ class IrrigationControllerApp {
       });
     }
 
+    // Atmospheric Manual Override Sliders
+    this.dom.sliderRain?.addEventListener('input', (e) => {
+      this.weather.rainForecastMm = parseFloat(e.target.value);
+      if (this.dom.valRain) this.dom.valRain.textContent = `${this.weather.rainForecastMm} mm`;
+      this.recomputeAll();
+    });
+
+    this.dom.sliderTemp?.addEventListener('input', (e) => {
+      this.weather.temperatureC = parseFloat(e.target.value);
+      if (this.dom.valTemp) this.dom.valTemp.textContent = `${this.weather.temperatureC} °C`;
+      this.recalculateAtmosphericVariables();
+      this.recomputeAll();
+    });
+
+    this.dom.sliderHumidity?.addEventListener('input', (e) => {
+      this.weather.humidityPct = parseFloat(e.target.value);
+      if (this.dom.valHumidity) this.dom.valHumidity.textContent = `${this.weather.humidityPct} %`;
+      this.recalculateAtmosphericVariables();
+      this.recomputeAll();
+    });
+
+    this.dom.sliderWind?.addEventListener('input', (e) => {
+      this.weather.windSpeedKmh = parseFloat(e.target.value);
+      if (this.dom.valWind) this.dom.valWind.textContent = `${this.weather.windSpeedKmh} km/h`;
+      this.recalculateAtmosphericVariables();
+      this.recomputeAll();
+    });
+
     document.querySelectorAll('.chips button').forEach(btn => {
       btn.addEventListener('click', (e) => {
         const val = parseInt(e.target.dataset.res, 10);
@@ -427,6 +526,19 @@ class IrrigationControllerApp {
     });
   }
 
+  recalculateAtmosphericVariables() {
+    // Vapor Pressure Deficit calculation
+    const es = 0.6108 * Math.exp((17.27 * this.weather.temperatureC) / (this.weather.temperatureC + 237.3));
+    const ea = es * (this.weather.humidityPct / 100);
+    this.weather.vpd = Math.max(0.1, Math.round((es - ea) * 10) / 10);
+
+    // Approximate FAO-56 Penman-Monteith ET0 shift when weather sliders are manually dragged
+    const tempFactor = (this.weather.temperatureC / 30);
+    const windFactor = 1 + (this.weather.windSpeedKmh / 60);
+    const vpdFactor = (this.weather.vpd / 1.4);
+    this.weather.et0 = Math.max(1.0, Math.round((4.5 * tempFactor * windFactor * vpdFactor * 0.5) * 10) / 10);
+  }
+
   simulateAutonomousDailyEvaporation() {
     this.regions.forEach(r => {
       const prof = SOIL_PROFILES[r.soilType];
@@ -437,6 +549,10 @@ class IrrigationControllerApp {
       if (curEl) curEl.textContent = `${r.currentMoisture.toFixed(1)}%`;
       const barEl = document.getElementById(`meter-bar-${r.id}`);
       if (barEl) barEl.style.transform = `scaleX(${Math.min(1, r.currentMoisture / 50)})`;
+      const sliderEl = document.getElementById(`slider-moisture-${r.id}`);
+      if (sliderEl) sliderEl.value = r.currentMoisture;
+      const moistLabel = document.getElementById(`val-moisture-label-${r.id}`);
+      if (moistLabel) moistLabel.textContent = `${r.currentMoisture.toFixed(1)}%`;
     });
 
     this.logTelemetry('ACTION', `Day advanced: Simulated depletion via local ET₀ (${this.weather.et0} mm) and crop transpiration.`);
@@ -468,7 +584,6 @@ class IrrigationControllerApp {
           resultsDiv.appendChild(chip);
         });
 
-        // Auto-select first result on enter/click
         const top = data.results[0];
         const topLabel = `${top.name}${top.admin1 ? ', ' + top.admin1 : ''}, ${top.country || ''}`;
         this.coords = { lat: top.latitude, lon: top.longitude };
@@ -504,7 +619,6 @@ class IrrigationControllerApp {
       const statusPill = document.getElementById('api-status');
       if (statusPill) statusPill.innerHTML = '<span class="pulse-dot"></span><span>SYNCING TELEMETRY...</span>';
 
-      // Open-Meteo Weather Forecast API endpoint fetching FAO-56 reference ET0 and rainfall
       const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&daily=precipitation_sum,et0_fao_evapotranspiration,temperature_2m_max&current_weather=true&hourly=relativehumidity_2m&timezone=auto`;
       const res = await fetch(url);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -516,7 +630,17 @@ class IrrigationControllerApp {
       this.weather.humidityPct = data.hourly?.relativehumidity_2m?.[0] ?? 50;
       this.weather.et0 = data.daily?.et0_fao_evapotranspiration?.[0] ?? 4.5;
 
-      // Extract 5-day forecast for Plotly charts
+      // Sync sliders with fetched weather
+      if (this.dom.sliderRain) this.dom.sliderRain.value = this.weather.rainForecastMm;
+      if (this.dom.sliderTemp) this.dom.sliderTemp.value = this.weather.temperatureC;
+      if (this.dom.sliderHumidity) this.dom.sliderHumidity.value = this.weather.humidityPct;
+      if (this.dom.sliderWind) this.dom.sliderWind.value = this.weather.windSpeedKmh;
+
+      if (this.dom.valRain) this.dom.valRain.textContent = `${this.weather.rainForecastMm} mm`;
+      if (this.dom.valTemp) this.dom.valTemp.textContent = `${this.weather.temperatureC} °C`;
+      if (this.dom.valHumidity) this.dom.valHumidity.textContent = `${this.weather.humidityPct} %`;
+      if (this.dom.valWind) this.dom.valWind.textContent = `${this.weather.windSpeedKmh} km/h`;
+
       if (data.daily?.time && data.daily?.et0_fao_evapotranspiration) {
         this.weather.forecastDays = data.daily.time.slice(0, 5).map(t => {
           const d = new Date(t);
@@ -525,16 +649,11 @@ class IrrigationControllerApp {
         this.weather.forecastET0 = data.daily.et0_fao_evapotranspiration.slice(0, 5);
       }
 
-      // Vapor Pressure Deficit (VPD) computation from temperature & relative humidity
-      const es = 0.6108 * Math.exp((17.27 * this.weather.temperatureC) / (this.weather.temperatureC + 237.3));
-      const ea = es * (this.weather.humidityPct / 100);
-      this.weather.vpd = Math.max(0.1, Math.round((es - ea) * 10) / 10);
+      this.recalculateAtmosphericVariables();
 
-      // AUTONOMOUS SOIL MOISTURE RETENTION/DEPLETION ADAPTATION
-      // Adjust in-situ soil moisture dynamically to match the local climate
+      // Dynamic moisture update per sector
       this.regions.forEach(r => {
         const prof = SOIL_PROFILES[r.soilType];
-        // Environmental drying factor: higher VPD and temperature reduce moisture
         const dryingFactor = (this.weather.vpd * 0.4) + (this.weather.et0 * 0.15);
         const naturalRainInfiltration = (this.weather.rainForecastMm * 0.35);
 
@@ -545,6 +664,10 @@ class IrrigationControllerApp {
         if (curEl) curEl.textContent = `${r.currentMoisture.toFixed(1)}%`;
         const barEl = document.getElementById(`meter-bar-${r.id}`);
         if (barEl) barEl.style.transform = `scaleX(${Math.min(1, r.currentMoisture / 50)})`;
+        const sliderEl = document.getElementById(`slider-moisture-${r.id}`);
+        if (sliderEl) sliderEl.value = r.currentMoisture;
+        const moistLabel = document.getElementById(`val-moisture-label-${r.id}`);
+        if (moistLabel) moistLabel.textContent = `${r.currentMoisture.toFixed(1)}%`;
       });
 
       if (statusPill) statusPill.innerHTML = '<span class="pulse-dot"></span><span>WEATHER: OPEN-METEO LIVE</span>';
@@ -561,25 +684,14 @@ class IrrigationControllerApp {
   recomputeAll() {
     let totalDemand = 0;
 
-    // INTEGRATED DEMAND CALCULATION:
-    // Demand is driven by two real-world factors:
-    // 1. Root-Zone Volumetric Deficit = ΔM × K_factor (Liters required to raise soil to target)
-    // 2. Transpiration Replacement Demand = ETc (mm) × Area (ha) × 10,000 (L/ha-mm)
     this.regions.forEach(r => {
       const kc = CROP_STAGES[r.stage].kc;
-      // Crop evapotranspiration rate: ETc = ET0 * Kc
       r.etc = Math.round((this.weather.et0 * kc) * 10) / 10;
-
-      // Volumetric moisture deficit percentage
       r.deficit = Math.max(0, Math.round((r.targetMoisture - r.currentMoisture) * 10) / 10);
 
-      // Deficit volume lift in Liters
       const deficitLiters = r.deficit * r.kFactor * 100;
-
-      // Daily crop water consumption in Liters (1 mm over 1 ha = 10,000 L)
       r.etcLiters = Math.round(r.etc * this.quadrantArea * 10000);
 
-      // If soil deficit exists, required water covers the deficit plus atmospheric transpiration
       if (r.deficit > 0) {
         r.waterRequired = Math.round(deficitLiters + (r.etcLiters * 0.5));
       } else {
@@ -685,7 +797,6 @@ class IrrigationControllerApp {
       return;
     }
 
-    // Default: Smart Agronomic Vulnerability
     let totalWeight = 0;
     const weights = {};
     this.regions.forEach(r => {
@@ -770,7 +881,6 @@ class IrrigationControllerApp {
     if (!this.dom.dynamicWater) return;
 
     const dynamicTotal = this.regions.reduce((a, b) => a + b.waterAllocated, 0);
-    // Baseline uniform calendar watering: 50 mm equivalent over entire acreage
     const fixedTotal = Math.round(this.totalArea * 500000);
     const saved = Math.max(0, fixedTotal - dynamicTotal);
     const savedPct = Math.round((saved / fixedTotal) * 100);
@@ -831,6 +941,10 @@ class IrrigationControllerApp {
           if (curEl) curEl.textContent = `${r.currentMoisture.toFixed(1)}%`;
           const barEl = document.getElementById(`meter-bar-${r.id}`);
           if (barEl) barEl.style.transform = `scaleX(${Math.min(1, r.currentMoisture / 50)})`;
+          const sliderEl = document.getElementById(`slider-moisture-${r.id}`);
+          if (sliderEl) sliderEl.value = r.currentMoisture;
+          const moistLabel = document.getElementById(`val-moisture-label-${r.id}`);
+          if (moistLabel) moistLabel.textContent = `${r.currentMoisture.toFixed(1)}%`;
         }
       });
 

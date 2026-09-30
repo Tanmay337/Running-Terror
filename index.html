@@ -184,7 +184,7 @@
               <h2>Weather Intelligence</h2>
 
               <p>
-                Real-time Open-Meteo atmospheric forecast automatically drives the irrigation gate.
+                Live Open-Meteo forecast with manual calibration sliders.
               </p>
 
             </div>
@@ -256,6 +256,30 @@
 
           </div>
 
+          <!-- MANUAL WEATHER OVERRIDE SLIDERS -->
+          <div class="manual-weather-box">
+            <span class="slider-section-title">Manual Atmospheric Sliders</span>
+            
+            <div class="manual-control-row">
+              <label for="slider-rain">Rain Forecast: <b id="val-rain">0 mm</b></label>
+              <input type="range" id="slider-rain" min="0" max="40" step="0.5" value="0">
+            </div>
+
+            <div class="manual-control-row">
+              <label for="slider-temp">Ambient Temperature: <b id="val-temp">30 °C</b></label>
+              <input type="range" id="slider-temp" min="5" max="50" step="1" value="30">
+            </div>
+
+            <div class="manual-control-row">
+              <label for="slider-humidity">Relative Humidity: <b id="val-humidity">45 %</b></label>
+              <input type="range" id="slider-humidity" min="10" max="100" step="1" value="45">
+            </div>
+
+            <div class="manual-control-row">
+              <label for="slider-wind">Wind Speed: <b id="val-wind">12 km/h</b></label>
+              <input type="range" id="slider-wind" min="0" max="60" step="1" value="12">
+            </div>
+          </div>
 
           <!-- DECISION BANNER -->
 
